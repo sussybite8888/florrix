@@ -444,7 +444,7 @@ void App::drawTitleStatus(Canvas& canvas, const std::string& status) {
     TextStyle title;
     title.size = 48.0;
     title.align = Align::Centre;
-    text(canvas, "flowrix beta", canvas.width() * 0.5, canvas.height() * 0.5 - 200.0, title);
+    text(canvas, "florr.exe", canvas.width() * 0.5, canvas.height() * 0.5 - 200.0, title);
 
     // Half the title's point size: the line under the heading is a status,
     // not a second heading (src/title_screen/index.ts:1264-1265).
@@ -480,7 +480,7 @@ void App::drawSessionReplaced(Canvas& canvas, double time) {
     TextStyle title;
     title.size = 48.0;
     title.align = Align::Centre;
-    text(canvas, "flowrix beta", centreX, layout.titleY, title);
+    text(canvas, "florr.exe", centreX, layout.titleY, title);
 
     // The server's words when it sent any, which it always does; the fallback
     // is only what an empty string would otherwise leave blank.
@@ -528,7 +528,7 @@ void App::drawLogin(Canvas& canvas, double time) {
     // Four hundred above centre, unclamped: on a short window the reference
     // lets it run off the top, and pinning it to the edge instead would put a
     // second heading beside the form's own.
-    text(canvas, "flowrix beta", centreX, canvas.height() * 0.5 - 400.0, title);
+    text(canvas, "florr.exe", centreX, canvas.height() * 0.5 - 400.0, title);
 
     TextStyle heading;
     heading.size = 28;
