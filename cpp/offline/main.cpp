@@ -265,6 +265,15 @@ int main(int argc, char** argv) {
     }
 
     flix::web::onPageHide(flushAll);
+    // A glitch trap aborts the runtime, and the server is in it: the world goes
+    // to storage first. The pagehide flush cannot do it afterwards -- it would
+    // be calling into a runtime that has already aborted.
+    g_app->setCrashHook([] {
+        if (g_server) {
+            g_server->persistAll();
+            mirrorDatabase();
+        }
+    });
     emscripten_set_main_loop_arg(frame, nullptr,
                                  // 0: requestAnimationFrame, the browser's own vsync.
                                  0,

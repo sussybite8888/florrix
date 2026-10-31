@@ -22,7 +22,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 66;
+inline constexpr std::uint16_t kProtocolVersion = 68;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -254,7 +254,13 @@ enum class ServerMessage : std::uint8_t {
                         ///< line can also be drawn as a bubble over that body;
                         ///< 0 for anything the server said in its own voice.
     Notice,             ///< u8 severity, str text
-    Died,               ///< str killerName, u32 xpLost, u32 survivedTicks
+    Died,               ///< str killerName, u32 xpLost, u32 survivedTicks,
+                        ///< u8 jumpscare. `jumpscare` is set when a `jumpscare`
+                        ///< map trap was the cause: the client plays the
+                        ///< fullscreen corruption scare and the death card's
+                        ///< Continue turns red and respawns (ClientMessage::
+                        ///< Respawn) at the pad the trap named instead of
+                        ///< leaving to the title. (Version 67.)
     CraftResult,        ///< u8 success, u16 itemType, u8 rarity, u32 crafted,
                         ///< u8 petalsReturned, str reason. `crafted` is how
                         ///< many upgrades the pool produced and
@@ -438,6 +444,15 @@ enum class ServerMessage : std::uint8_t {
                         ///< Profiles and deltas together, per connection, from
                         ///< 1; ProfileCheck reports the last one applied.
                         ///< (Version 66.)
+    Glitch,             ///< (empty). This client's flower walked into a
+                        ///< `glitch` map trap. The client plays the crash --
+                        ///< the screen glitches, a Windows blue screen fills
+                        ///< to 100%, and the game is left dead and renamed
+                        ///< florr.exe. Nothing follows it that the client acts
+                        ///< on; it stops taking input and the player must
+                        ///< restart. A client already florr.exe instead leaves
+                        ///< the game after the blue screen, sending LeaveGame.
+                        ///< Sent once per body. (Version 68.)
 };
 
 // ---------------------------------------------------------------------------

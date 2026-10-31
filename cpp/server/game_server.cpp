@@ -578,6 +578,14 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
         }
         moveEntityToRealm(entity, realm, position);
     };
+    // A jumpscare trap kills and then respawns elsewhere, which is a death and
+    // a realm change at once -- both the connection layer's to make.
+    movement_->onJumpscare = [this](Entity entity, Realm realm, Vec2 position) {
+        onJumpscare(entity, realm, position);
+    };
+    // A glitch trap crashes the player's client; only the connection layer can
+    // send that one flower the message that does it.
+    movement_->onGlitch = [this](Entity entity) { onGlitch(entity); };
     dungeons_->worldMaps = &worldMaps_;
     dungeons_->moveToRealm = [this](Entity entity, Realm realm, Vec2 position) {
         moveEntityToRealm(entity, realm, position);
@@ -1217,11 +1225,19 @@ void GameServer::reapDead() {
                 if (net::Connection* connection = listener_.find(session->connection)) {
                     ByteWriter w;
                     w.u8(static_cast<std::uint8_t>(net::ServerMessage::Died));
-                    w.str(killerLabel(world_, world_.get<Dead>(e).killer));
+                    // A jumpscare death has no killer body; it is the map's
+                    // corruption, which the card names in place of a mob.
+                    w.str(session->jumpscareDeath
+                              ? std::string("Corruption")
+                              : killerLabel(world_, world_.get<Dead>(e).killer));
                     w.u32(0);
                     w.u32(tick_);
+                    w.u8(session->jumpscareDeath ? 1 : 0);
                     connection->send(w);
                 }
+                // The flag's one job is that message. The respawn it arms lives
+                // on its own `jumpscareRespawnPending`, consumed by spawnPlayer.
+                session->jumpscareDeath = false;
             } else {
                 // A bot leaves a corpse too, which is not tidiness: bots carry
                 // yggdrasil for each other and actively path to each other's
@@ -5647,37 +5663,41 @@ void GameServer::handleRespawn(Session& session) {
     // death means the grantee keeps it while they are looking at the death
     // card, which is where the reference leaves it too.
     revokeTempAdmin(session.connection);
-    // The map the client is still drawing. A corpse keeps its realm until it
-    // is replaced, so this is what the client last heard; a session with no
-    // body has told its client nothing since the join, and is restated
-    // regardless.
-    bool corpseRealmKnown = false;
-    Realm corpseRealm = Realm::Overworld;
+    // The viewport the corpse was streaming, carried onto the fresh body so the
+    // first frame after a respawn shows as much world as the last frame before
+    // it. It is restated by the next InputFrame regardless, so a default is
+    // only ever one tick wrong.
+    Vec2 viewport{kViewportWidth, kViewportHeight};
     if (session.playing() && world_.isAlive(session.entity)) {
         Health* health = world_.tryGet<Health>(session.entity);
         if (health && health->alive()) return;   // not actually dead
-        if (const Transform* corpse = world_.tryGet<Transform>(session.entity)) {
-            corpseRealmKnown = true;
-            corpseRealm = corpse->realm;
+        if (const PlayerLocation* location = world_.tryGet<PlayerLocation>(session.entity)) {
+            if (location->viewport.x > 0 && location->viewport.y > 0) viewport = location->viewport;
         }
         despawnPlayer(session, false);
     }
     const Entity reborn = spawnPlayer(session);
-    // A flower that died in a map it teleported into comes back where its
-    // spawn choice says -- usually another map. The snapshot stream restates
-    // the body but never the realm, so the client would keep drawing the map
-    // it died on under a body standing somewhere else: the same message a
-    // pad sends, for the same reason.
-    if (reborn != NULL_ENTITY) {
-        const Transform* transform = world_.tryGet<Transform>(reborn);
-        if (transform != nullptr && (!corpseRealmKnown || transform->realm != corpseRealm)) {
-            sendRealmChange(session, transform->position);
-        }
-    }
+    net::Connection* connection = listener_.find(session.connection);
+    if (reborn == NULL_ENTITY || connection == nullptr) return;
+
+    world_.get<PlayerLocation>(reborn).viewport =
+        claimableViewport(world_, reborn, content(), viewport.x, viewport.y);
+    // A full re-entry, the same message a join is answered with: the respawn
+    // may land in another map (a jumpscare sends its victim across the world),
+    // and the only thing that cleanly clears the client's death card, swaps its
+    // map and takes its body's new id in one step is JoinAccepted. The corpse's
+    // view is dropped so the new body's surroundings are restated from nothing.
+    views_[session.connection].reset();
+    ByteWriter w;
+    w.u8(static_cast<std::uint8_t>(net::ServerMessage::JoinAccepted));
+    w.u32(world_.get<NetId>(reborn).value);
+    w.position(world_.get<Transform>(reborn).position);
+    w.u32(tick_);
+    w.i64(activeMaze().day());
+    writeMapGrid(w, *terrain_, world_.get<Transform>(reborn).realm);
+    connection->send(w);
     // A fresh arena run has a fresh kit; the same restatement the join makes.
-    if (net::Connection* connection = listener_.find(session.connection)) {
-        sendProfile(session, *connection);
-    }
+    sendProfile(session, *connection);
 }
 
 void GameServer::handlePing(net::Connection& connection, ByteReader& reader) {
@@ -5734,6 +5754,51 @@ void GameServer::onPlayerRevived(Entity revived, Entity reviver) {
     connection->send(w);
 }
 
+void GameServer::onJumpscare(Entity entity, Realm realm, Vec2 position) {
+    // A bot has no client to scare and no session to arm; it simply walks over
+    // a trap, the same way it walks over a pad (takesTeleporters already keeps
+    // the movement pass from firing one for it, so this is belt and braces).
+    Session* session = sessionForEntity(entity);
+    if (session == nullptr) return;
+    if (!world_.isAlive(entity) || world_.has<Dead>(entity)) return;
+
+    // The trap arms the next respawn at the pad it named, and tags the death so
+    // the reaper's `Died` plays the scare and offers the red Continue instead
+    // of the way back to the title.
+    session->jumpscareDeath = true;
+    session->jumpscareRespawnPending = true;
+    session->jumpscareRespawnRealm = realm;
+    session->jumpscareRespawnPosition = position;
+
+    // A real death, through the ordinary reaper: XP and petals are lost exactly
+    // as a mob's kill would take them. No killer entity -- the corruption is
+    // the map, not a body -- and reapDead() names it "Corruption" for a death
+    // the session marks a jumpscare.
+    world_.add<Dead>(entity, Dead{NULL_ENTITY});
+}
+
+void GameServer::onGlitch(Entity entity) {
+    // A bot has no client to crash; the movement pass already skips traps for
+    // bots (takesTeleporters), so this is belt and braces.
+    Session* session = sessionForEntity(entity);
+    if (session == nullptr) return;
+    // Once only: the body stays in the trap, so the movement pass meets it here
+    // every tick, and a crashed client needs telling exactly once.
+    if (session->glitchSent) return;
+    net::Connection* connection = listener_.find(session->connection);
+    if (connection == nullptr) return;
+    session->glitchSent = true;
+    // The whole message is its opcode: the client crashes on receipt, plays the
+    // blue screen, and stops. The body is left standing -- a crashed client
+    // steers nothing, and the socket closing when the player restarts is what
+    // reaps it, through the ordinary disconnect path. A client that has crashed
+    // before sends LeaveGame after the blue screen instead, which reaps it the
+    // way any trip back to the title does.
+    ByteWriter w;
+    w.u8(static_cast<std::uint8_t>(net::ServerMessage::Glitch));
+    connection->send(w);
+}
+
 Entity GameServer::spawnPlayer(Session& session) {
     // Never on top of a body the session still holds. Both callers arrive
     // with none -- handleJoin refuses a session that is playing, and a respawn
@@ -5757,6 +5822,8 @@ Entity GameServer::spawnPlayer(Session& session) {
         // A split with no active half to end it through, should one ever exist.
         endSplit(session, clockMillis_, false);
     }
+    // A fresh body can be crashed afresh: see Session::glitchSent.
+    session.glitchSent = false;
 
     // Where a player appears is a property of the MAP, not of the player.
     // Level deliberately does not enter into it: picking a zone by tier reads
@@ -5767,9 +5834,17 @@ Entity GameServer::spawnPlayer(Session& session) {
     // the walls: the reference refuses a spawn point that overlaps a body or
     // that has more than a handful of mobs within 200 units, which is what
     // stops a fresh flower materialising inside a swarm.
-    const Realm realm = spawnRealmFor(session);
+    Realm realm;
     Vec2 spawn;
-    if (realm == Realm::Arena) {
+    if (session.jumpscareRespawnPending) {
+        // A jumpscare trap chose where this flower comes back: the pad it named,
+        // resolved onto open ground the way a teleporter's arrival is. One life
+        // only -- consumed here, so the next ordinary death returns to the
+        // chosen door rather than back to the trap's far end.
+        session.jumpscareRespawnPending = false;
+        realm = session.jumpscareRespawnRealm;
+        spawn = terrain_->resolveCircle(session.jumpscareRespawnPosition, kPlayerBaseRadius, realm);
+    } else if ((realm = spawnRealmFor(session)) == Realm::Arena) {
         spawn = kArenaSpawn;
     } else if (realm == Realm::Maze) {
         // Inside the entrance room, jittered so a party does not stack on one

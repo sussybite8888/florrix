@@ -456,6 +456,10 @@ void App::pollNetwork() {
         // rendering behind the card, exactly as they do in the reference.
         deathCardVisible_ = true;
         screen_ = Screen::Dead;
+        // A jumpscare trap slams the corrupted flower over the screen the
+        // instant it kills; the card slides in underneath and shows through as
+        // it fades.
+        if (net_.jumpscareDeath()) jumpscareStartSeconds_ = timeSeconds_;
     }
     // A yggdrasil put the body back on its feet. Read as a one-shot flag
     // rather than as `!net_.dead()`, because --dead raises the card on a
@@ -470,6 +474,37 @@ void App::pollNetwork() {
             screen_ = Screen::Playing;
         }
     }
+    // A jumpscare's red Continue respawns straight from the death card: the
+    // server answers the Respawn with a JoinAccepted, which clears `dead_` and
+    // lands a fresh body in (usually) another map. There is no lobby frame to
+    // run enterGame() the way a title-screen join gets, so the world is
+    // re-entered here on that fresh accept. Gated on the accept itself, not on
+    // "playing and not dead", so the scripted --dead screenshot (which parks on
+    // the death card with no death behind it) is never swept back into play.
+    if (net_.takeRespawnAccepted() && screen_ == Screen::Dead) {
+        jumpscareStartSeconds_ = -1.0;
+        enterGame();
+    }
+    // A glitch trap crashed the client: begin the sequence, and brand the
+    // install florr.exe for good. Persisted at once, not on the way out: a
+    // crash the player answers by force-reloading never runs the ordinary save.
+    // An install that is florr.exe already has crashed before, and this time
+    // it restarts into the corrupted desktop instead of going down.
+    if (net_.takeGlitch() && !glitchActive()) {
+        glitchStartSeconds_ = timeSeconds_;
+        glitchRecovers_ = menus_.settings().glitched;
+        if (!menus_.settings().glitched) {
+            menus_.settings().glitched = true;
+            menus_.settings().save(settingsPath());
+        }
+    }
+}
+
+std::string App::gameTitle() const {
+    // florr.io until a glitch trap has crashed this install, florr.exe ever
+    // after. The flag is persisted (ClientSettings::glitched), so once it has
+    // happened every future launch opens as florr.exe.
+    return menus_.settings().glitched ? "florr.exe" : "florr.io";
 }
 
 void App::markPhaseOps(OpPhase phase) {
@@ -641,7 +676,10 @@ void App::frame(double dt) {
     // The cursor control law measures from the flower's drawn position and the
     // camera pins to it, so easing after them would steer and frame the world
     // from a position one frame stale.
-    if (screen_ == Screen::Playing || screen_ == Screen::Dead) {
+    // A glitching client is frozen: it stops easing, so the world under the
+    // crash holds the last frame it drew, and the screen-update switch below is
+    // skipped so no input is produced and nothing answers the player.
+    if (!glitchActive() && (screen_ == Screen::Playing || screen_ == Screen::Dead)) {
         // Before anything paints, so the iris holds up the frame from before
         // the jump.
         if (teleported) beginTeleportIris();
@@ -684,14 +722,25 @@ void App::frame(double dt) {
         else easeToward(lowHealthVignette_, dark, kLowHealthVignetteEaseSeconds);
     }
 
-    switch (screen_) {
-        case Screen::Connecting:   updateConnecting(); break;
-        case Screen::Login:        updateLogin(dt); break;
-        case Screen::Lobby:        updateLobby(); break;
-        case Screen::Playing:      updatePlaying(dt); break;
-        case Screen::Dead:         updateDead(dt); break;
-        case Screen::Disconnected: break;
-        case Screen::Replaced:     updateSessionReplaced(); break;
+    // While a glitch trap is crashing the client there is nothing to drive:
+    // no input, no buttons, no screen changes. The sequence runs on its own
+    // clock in drawGlitch(), and ends in a real crash or, on an install that
+    // has crashed before, on the corrupted desktop (recoverFromGlitch). That
+    // takes every input itself until its hunt is over, and none of the
+    // screens behind it hears any of it.
+    if (xpDesktop_.active()) {
+        xpDesktop_.update(window_, timeSeconds_);
+        if (xpDesktop_.finished(timeSeconds_)) leaveXpDesktop();
+    } else if (!glitchActive()) {
+        switch (screen_) {
+            case Screen::Connecting:   updateConnecting(); break;
+            case Screen::Login:        updateLogin(dt); break;
+            case Screen::Lobby:        updateLobby(); break;
+            case Screen::Playing:      updatePlaying(dt); break;
+            case Screen::Dead:         updateDead(dt); break;
+            case Screen::Disconnected: break;
+            case Screen::Replaced:     updateSessionReplaced(); break;
+        }
     }
     // The chat's channel strip has been read for this frame's presses; the
     // draw puts it back only if it paints it again. A frame that hides the
@@ -772,7 +821,11 @@ void App::frame(double dt) {
 #ifdef __EMSCRIPTEN__
     canvasPhaseMark_ = canvasOpsEmitted();
 #endif
-    if (inWorld) {
+    if (xpDesktop_.active()) {
+        // Nothing: the desktop covers the whole screen, and is drawn after the
+        // wipe below. The title's panels answer clicks as they paint, so they
+        // are not painted at all rather than painted underneath it.
+    } else if (inWorld) {
         tallyRunLoot();
         renderer_.ingestEvents(net_.view());
         renderer_.update(dt);
@@ -895,16 +948,33 @@ void App::frame(double dt) {
     markPhaseOps(OpPhase::Panels);
     updateTextSelection(canvas);
 
+    // The jumpscare slams over the HUD, the panels and the death card alike --
+    // it is the one thing that should own the whole screen while it plays --
+    // and self-guards when none is running.
+    drawJumpscare(canvas, timeSeconds_);
     // Over the HUD and every panel, as the reference's iris is drawn on top
     // of everything; only a scene change goes over it.
     drawTeleportIris(canvas);
     // Last of all, over every other layer: the wipe is what hides the seam
     // between two scenes, so nothing may paint on top of it.
     drawSceneWipe(canvas);
+    // Over the wipe too: the desktop is a whole other computer. Self-guards.
+    drawXpDesktop(canvas);
+    // Past even the wipe: a crash owns the whole screen, and once it has begun
+    // nothing underneath matters. Self-guards when no glitch is running.
+    drawGlitch(canvas, timeSeconds_);
     // After every field has been hit-tested, which is the only point at which
     // the set is complete.
     publishKeyboardRegions();
     window_.present();
+    // The stop screen has held at 100% and is on screen now: the first time,
+    // the client goes down for real, the way that screen says it is; after
+    // that, it "restarts" into the corrupted desktop. After present(), so the
+    // frame the crash leaves behind is that one.
+    if (glitchEndDue(timeSeconds_)) {
+        if (glitchRecovers_) recoverFromGlitch();
+        else crashGlitched();
+    }
 
     // One heartbeat a second while the socket is up, as the reference's own
     // interval does. It is what makes the ping readout a number.

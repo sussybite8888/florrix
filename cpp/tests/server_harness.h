@@ -309,6 +309,26 @@ inline std::string fixtureLinkedPad(double x, double y, const std::string& id,
            "{ \"name\": \"to\", \"type\": \"string\", \"value\": \"" + to + "\" }]}";
 }
 
+/// One `jumpscares` object: an AREA that kills whoever walks into it and
+/// respawns them at the pad its `to` names, linked exactly as a paired pad is.
+inline std::string fixtureJumpscare(double x, double y, double w, double h,
+                                    const std::string& to) {
+    return "{ \"id\": 96, \"name\": \"\", \"type\": \"jumpscare\", \"visible\": true,"
+           " \"rotation\": 0, \"x\": " + std::to_string(x) + ", \"y\": " + std::to_string(y) +
+           ", \"width\": " + std::to_string(w) + ", \"height\": " + std::to_string(h) +
+           ", \"properties\": ["
+           "{ \"name\": \"to\", \"type\": \"string\", \"value\": \"" + to + "\" }]}";
+}
+
+/// One `glitches` object: an AREA that crashes whoever walks into it. It names
+/// no destination -- the crash is terminal.
+inline std::string fixtureGlitch(double x, double y, double w, double h) {
+    return "{ \"id\": 97, \"name\": \"\", \"type\": \"glitch\", \"visible\": true,"
+           " \"rotation\": 0, \"x\": " + std::to_string(x) + ", \"y\": " + std::to_string(y) +
+           ", \"width\": " + std::to_string(w) + ", \"height\": " + std::to_string(h) +
+           ", \"properties\": []}";
+}
+
 /// One `npcs` object: a POINT naming the NPC that stands there and its tier.
 /// An empty `npc` writes the object without one, which the reader drops.
 inline std::string fixtureNpc(double x, double y, const std::string& npc,
@@ -357,7 +377,9 @@ inline std::string fixtureMap(int cols, int rows, const std::string& doors,
                               const std::function<bool(int, int)>& solidAt = {},
                               const std::function<bool(int, int)>& waterAt = {},
                               const std::function<bool(int, int)>& diagonalAt = {},
-                              const std::string& npcs = {}) {
+                              const std::string& npcs = {},
+                              const std::string& jumpscares = {},
+                              const std::string& glitches = {}) {
     std::string background, wall, water;
     for (int y = 0; y < rows; ++y) {
         for (int x = 0; x < cols; ++x) {
@@ -403,7 +425,11 @@ inline std::string fixtureMap(int cols, int rows, const std::string& doors,
   { "type": "objectgroup", "id": 6, "name": "spawns", "draworder": "topdown",
     "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [)" + spawns + R"(] },
   { "type": "objectgroup", "id": 7, "name": "npcs", "draworder": "topdown",
-    "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [)" + npcs + R"(] }
+    "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [)" + npcs + R"(] },
+  { "type": "objectgroup", "id": 8, "name": "jumpscares", "draworder": "topdown",
+    "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [)" + jumpscares + R"(] },
+  { "type": "objectgroup", "id": 9, "name": "glitches", "draworder": "topdown",
+    "opacity": 1, "visible": true, "x": 0, "y": 0, "objects": [)" + glitches + R"(] }
  ]
 })";
     return out;

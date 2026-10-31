@@ -617,7 +617,9 @@ void App::drawAdminAnnouncement(Canvas& canvas, double clearOf) {
               0.0, 1.0);
 
     // Credited to the account that made it, which the server signs the line
-    // with -- not to a name written into the client.
+    // with -- not to a name written into the client. The one exception is the
+    // glitch trap's scripted line (NetClient::addLocalAnnouncement), which is
+    // part of the scare and grants or targets nothing.
     const std::string line =
         (announcement.author.empty() ? std::string("Announcement")
                                      : "Announcement from " + announcement.author) +

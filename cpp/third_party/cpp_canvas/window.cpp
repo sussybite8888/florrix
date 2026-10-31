@@ -1737,3 +1737,27 @@ void Window::setCursorVisible(bool visible) {
 void Window::setCursorShape(CursorShape shape) {
   if (shape < CursorShape::Count) impl_->cursorRequested = shape;
 }
+
+void Window::requestFullscreen() {
+#ifdef __EMSCRIPTEN__
+  // deferUntilInEventHandler = EM_TRUE: the Fullscreen API only grants a switch
+  // from inside a user gesture, and this is called from the frame loop, which
+  // is not one. So emscripten holds the request and makes it from inside the
+  // next browser event the player generates. The player is entering the game,
+  // so their very next move, click or key carries it through within a moment.
+  // The canvas is CSS-sized to the viewport and its backing store is re-read
+  // from its client size every pump, so the frame after the switch just draws
+  // at the full-screen resolution; nothing else here has to know.
+  const std::string selector = "#" + impl_->elementId;
+  emscripten_request_fullscreen(selector.c_str(), EM_TRUE);
+#else
+  // Desktop fullscreen, the FULLSCREEN_DESKTOP ("borderless") kind: it keeps
+  // the desktop's resolution and just grows the window to fill the display,
+  // so there is no videomode switch to stutter through and the switch is
+  // instant -- the right feel for a crash meant to swallow the screen. The
+  // window is not sized here; the next pump's refreshGeometry() reads the new
+  // SDL window size, rebuilds the canvas and texture to match, and the frame
+  // after the switch simply draws at the screen's resolution.
+  if (impl_->window) SDL_SetWindowFullscreen(impl_->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+#endif
+}

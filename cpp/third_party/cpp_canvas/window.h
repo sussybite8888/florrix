@@ -381,6 +381,18 @@ public:
     // flickering between the two.
     void setCursorShape(CursorShape shape);
 
+    /// Makes the window fill the screen. On the web the Fullscreen API only
+    /// grants this from inside a user gesture, so the request is deferred to the
+    /// next browser event the player generates -- a call made from the frame
+    /// loop (where this one is) is not itself in a gesture. On the desktop it is
+    /// an immediate SDL borderless (FULLSCREEN_DESKTOP) switch, which keeps the
+    /// desktop resolution and does not change videomode. Either way the backing
+    /// store is re-read from the window/canvas size every pump, so the frame
+    /// after the switch simply draws at the screen's resolution. Only ever
+    /// called from the gesture that starts a game, so tests and screenshots,
+    /// which never reach that path, keep their fixed-size window.
+    void requestFullscreen();
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

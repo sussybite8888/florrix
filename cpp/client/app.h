@@ -32,6 +32,7 @@
 #include "client/ui/menus.h"
 #include "client/ui/mobile_controls.h"
 #include "client/ui/tutorial.h"
+#include "client/ui/xp_desktop.h"
 #include "shared/game/map_elements.h"
 #include "shared/core/types.h"
 
@@ -182,6 +183,12 @@ public:
     /// Finishes: saves, as persist() does. run() does this on the way out; the
     /// emscripten build calls it when step() first returns false.
     void shutdown();
+
+    /// Run just before a glitch trap takes the client down for real (see
+    /// crashGlitched). The offline page sets it: its server lives in the same
+    /// wasm, so the abort takes the server down too, and the world has to be in
+    /// storage before it goes.
+    void setCrashHook(std::function<void()> hook) { crashHook_ = std::move(hook); }
 
 private:
     void frame(double dt);
@@ -499,6 +506,9 @@ private:
     /// biome does in the browser build.
     std::unordered_map<std::string, std::shared_ptr<SvgDocument>> titleBackgrounds_;
     const SvgDocument* titleBackground(const std::string& backdrop);
+    /// One staged artwork by its file name, compiled on first use and kept in
+    /// the same cache; null when it is missing or does not parse.
+    const SvgDocument* stagedArt(const std::string& file);
     WorldRenderer renderer_;
     /// The map's annotation layer. The client reads the same bundle the server
     /// does, and needs only one thing from it: which biomes exist to be picked.
@@ -818,6 +828,60 @@ private:
     TeleportIris teleportIris_;
     void beginTeleportIris();
     void drawTeleportIris(Canvas&);
+
+    // -- jumpscare -----------------------------------------------------------
+    /// The scare a `jumpscare` map trap plays the instant it kills: a corrupted
+    /// flower slammed over the whole screen that shakes and fades, leaving the
+    /// death card (with its red Continue) showing through. `-1` when none is
+    /// playing; otherwise the time it began, on the timeSeconds_ clock. Started
+    /// when a jumpscare death arrives (NetClient::jumpscareDeath) and cleared
+    /// when it has run its course or the respawn lands.
+    double jumpscareStartSeconds_ = -1.0;
+    void drawJumpscare(Canvas&, double time);
+
+    // -- glitch crash --------------------------------------------------------
+    /// The crash a `glitch` map trap plays: the screen tears apart in
+    /// corruption symbols, a Windows blue screen fills to 100% and holds there
+    /// a moment, and then -- the first time -- the client really does crash on
+    /// it (crashGlitched). `-1` when none is running; otherwise the time it
+    /// began, on the timeSeconds_ clock. The client is frozen while it is set.
+    /// Begun when the Glitch message arrives (NetClient::takeGlitch).
+    double glitchStartSeconds_ = -1.0;
+    /// Whether the running crash found this install already florr.exe, i.e.
+    /// a glitch trap has crashed it before. That one does not crash for real:
+    /// the stop screen gives way to the corrupted desktop (recoverFromGlitch).
+    bool glitchRecovers_ = false;
+    bool glitchActive() const { return glitchStartSeconds_ >= 0.0; }
+    void drawGlitch(Canvas&, double time);
+    /// True once the stop screen has held at 100% for its moment at `time`:
+    /// the frame drawn then is the last of the sequence.
+    bool glitchEndDue(double time) const;
+    /// Takes the client down for real -- an abort, not a quit: on the desktop
+    /// the process dies and the OS reports the crash; in a page the runtime
+    /// aborts and the canvas keeps the stop screen it last drew. Never returns.
+    [[noreturn]] void crashGlitched();
+    std::function<void()> crashHook_;
+    /// Ends a crash on an install that has crashed before: the "restart" the
+    /// blue screen promised boots the corrupted desktop (xpDesktop_) instead
+    /// of the game.
+    void recoverFromGlitch();
+
+    // -- corrupted desktop ---------------------------------------------------
+    /// The Windows XP desktop a second glitch crash restarts into, with its
+    /// hunt for every corruption.exe. While it is up it owns the whole screen
+    /// and every input; nothing underneath is drawn or updated.
+    ui::XpDesktop xpDesktop_;
+    void drawXpDesktop(Canvas&);
+    /// The last corruption.exe is gone: back to the title screen, out of the
+    /// desktop, with an announcement from "M28" that something didn't go to
+    /// plan.
+    void leaveXpDesktop();
+
+    /// What the game calls itself on every title/menu screen: "florr.io" until
+    /// a glitch trap has crashed this install, "florr.exe" ever after (the
+    /// persisted ClientSettings::glitched flag). One source so the four screens
+    /// that paint the heading cannot disagree.
+    std::string gameTitle() const;
 
     // -- menus ---------------------------------------------------------------
     /// Owns every panel, the menu bar, the loadout strip and what is being

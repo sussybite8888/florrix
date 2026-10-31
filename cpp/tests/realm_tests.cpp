@@ -877,3 +877,153 @@ TEST(a_respawn_into_another_realm_sends_the_client_that_realms_map) {
     CHECK_NEAR(client.arrival().y, world.get<Transform>(reborn).position.y, 1.0);
     flix::testsupport::removeDataDir(dir);
 }
+
+// ---------------------------------------------------------------------------
+// A jumpscare trap kills and respawns at the pad it names
+// ---------------------------------------------------------------------------
+
+TEST(a_jumpscare_trap_kills_and_respawns_at_the_pad_it_names) {
+    // One map, three annotations: the door a join lands at, an arrival-only pad
+    // "sanctum", and a jumpscare AREA whose `to` names that pad. Walking into
+    // the area is a real death -- tagged a jumpscare on the wire -- and the
+    // respawn lands at the pad rather than back at the door.
+    using flix::testsupport::fixtureDoor;
+    using flix::testsupport::fixtureJumpscare;
+    using flix::testsupport::fixtureMap;
+    using flix::testsupport::stageDataDir;
+
+    const double cell = kTileSize;
+    // An arrival-only pad: an `id` and nothing else. Nothing leads out of it,
+    // so it is scenery a jumpscare borrows as a destination -- linkPads() marks
+    // it "arrived at", which is why it draws no leads-nowhere warning.
+    const std::string sanctum =
+        "{ \"id\": 92, \"name\": \"\", \"type\": \"teleporter\", \"point\": true,"
+        " \"rotation\": 0, \"width\": 0, \"height\": 0, \"x\": " + std::to_string(cell * 12) +
+        ", \"y\": " + std::to_string(cell * 12) + ", \"properties\": ["
+        "{ \"name\": \"id\", \"type\": \"string\", \"value\": \"sanctum\" }]}";
+    const std::string map = fixtureMap(
+        16, 16,
+        fixtureDoor("start", "Start", cell * 2, cell * 2, cell * 3, cell * 3, true, 0.0),
+        sanctum,          // teleporters
+        std::string(),    // spawns: none, so no mob crowds the respawn
+        {}, {}, {},       // solidAt (border only), waterAt, diagonalAt
+        std::string(),    // npcs
+        fixtureJumpscare(cell * 6, cell * 6, cell * 3, cell * 3, "sanctum"));
+    const std::string dir = stageDataDir("jumpscare", {{"grove", map}});
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("jumpscare", {}, dir, 0);
+    if (!h.ready) { CHECK(false); flix::testsupport::removeDataDir(dir); return; }
+
+    NetClient client;
+    CHECK(joinAs(h, client, "wanderer", "start"));
+    CHECK(!client.dead());
+    CHECK(!client.jumpscareDeath());
+
+    World& world = h.server.world();
+    const Entity body = bodyNamed(world, "wanderer");
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+
+    // Walk into the trap: its centre, open interior ground.
+    world.get<Transform>(body).position = {cell * 6 + cell * 1.5, cell * 6 + cell * 1.5};
+    CHECK(h.stepUntil({&client}, [&] { return client.dead(); }));
+    // The wire carried the trap's mark, so the client plays the scare and reds
+    // the button rather than treating it as an ordinary death.
+    CHECK(client.jumpscareDeath());
+
+    // The old body is a corpse; the respawn builds a new one AT THE PAD.
+    client.requestRespawn();
+    CHECK(h.stepUntil({&client}, [&] {
+        const Entity reborn = bodyNamed(world, "wanderer");
+        return reborn != NULL_ENTITY && reborn != body && !world.has<Dead>(reborn);
+    }));
+    const Entity reborn = bodyNamed(world, "wanderer");
+    CHECK(reborn != NULL_ENTITY);
+    if (reborn == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+
+    const Vec2 at = world.get<Transform>(reborn).position;
+    const Vec2 pad{cell * 12, cell * 12};
+    // At the pad the trap named -- within a tile, since resolveCircle may nudge
+    // the arrival off a wall -- and nowhere near the "start" door it joined at.
+    CHECK_NEAR(at.x, pad.x, cell);
+    CHECK_NEAR(at.y, pad.y, cell);
+    CHECK(distance(at, Vec2{cell * 2, cell * 2}) > cell * 3);
+
+    // The scare is over once the body stands again: the client cleared the flag
+    // when its JoinAccepted landed.
+    CHECK(h.stepUntil({&client}, [&] { return !client.dead(); }));
+    CHECK(!client.jumpscareDeath());
+
+    flix::testsupport::removeDataDir(dir);
+}
+
+// ---------------------------------------------------------------------------
+// A glitch trap crashes the client
+// ---------------------------------------------------------------------------
+
+TEST(a_glitch_trap_sends_the_client_the_crash) {
+    // One map with a door and a glitch AREA. Walking into it makes the server
+    // send this one client the Glitch message, which is all the server does --
+    // the crash sequence itself is the client's, and terminal.
+    using flix::testsupport::fixtureDoor;
+    using flix::testsupport::fixtureGlitch;
+    using flix::testsupport::fixtureMap;
+    using flix::testsupport::stageDataDir;
+
+    const double cell = kTileSize;
+    const std::string map = fixtureMap(
+        16, 16,
+        fixtureDoor("start", "Start", cell * 2, cell * 2, cell * 3, cell * 3, true, 0.0),
+        std::string(),    // teleporters
+        std::string(),    // spawns
+        {}, {}, {},       // solidAt (border only), waterAt, diagonalAt
+        std::string(),    // npcs
+        std::string(),    // jumpscares
+        fixtureGlitch(cell * 9, cell * 9, cell * 3, cell * 3));
+    const std::string dir = stageDataDir("glitch", {{"grove", map}});
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("glitch", {}, dir, 0);
+    if (!h.ready) { CHECK(false); flix::testsupport::removeDataDir(dir); return; }
+
+    NetClient client;
+    CHECK(joinAs(h, client, "doomed", "start"));
+    CHECK(!client.takeGlitch());
+
+    World& world = h.server.world();
+    const Entity body = bodyNamed(world, "doomed");
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+
+    // Walk into the trap: the client is told to crash.
+    world.get<Transform>(body).position = {cell * 9 + cell * 1.5, cell * 9 + cell * 1.5};
+    CHECK(h.stepUntil({&client}, [&] { return client.takeGlitch(); }));
+
+    // The server does not kill the body -- a crashed client simply stops; the
+    // body lingers until the socket closes. It did not die and it was not
+    // teleported.
+    CHECK(world.isAlive(body));
+    CHECK(!client.dead());
+
+    // Once per body: standing in it says nothing more.
+    h.step(10, {&client});
+    CHECK(!client.takeGlitch());
+
+    // A client that has crashed before leaves the game after the blue screen.
+    // The body goes with it, and the next flower the same session joins with
+    // is crashed again when it walks in.
+    client.leaveGame();
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(bodyNamed(world, "doomed") == NULL_ENTITY);
+    client.joinGame(1280, 720, "start", "doomed");
+    CHECK(h.stepUntil({&client}, [&] { return client.view().self().netId != 0; }));
+    const Entity again = bodyNamed(world, "doomed");
+    CHECK(again != NULL_ENTITY);
+    if (again == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+    CHECK(!client.takeGlitch());
+    world.get<Transform>(again).position = {cell * 9 + cell * 1.5, cell * 9 + cell * 1.5};
+    CHECK(h.stepUntil({&client}, [&] { return client.takeGlitch(); }));
+
+    flix::testsupport::removeDataDir(dir);
+}

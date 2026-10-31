@@ -244,6 +244,14 @@ public:
     void drawDeadFlower(Canvas&, std::uint16_t equipFlags, double mouth,
                         double timeSeconds) const;
 
+    /// A live flower at rest in the same art space -- its own eyes, gaze and
+    /// equipment, smiling, painted by the world's own face code -- with its
+    /// body in `bodyColor`. No skin and no status colour (corruption, poison,
+    /// undead): either would paint over the colour asked for. Public for the
+    /// glitch's stop screen, which shows the player's flower in black and blue.
+    void drawFlowerInColor(Canvas&, const RemoteEntity&, std::uint32_t bodyColor,
+                           double timeSeconds) const;
+
     /// What every flower on screen has been heard saying, borrowed from
     /// NetClient. Optional: without it -- a tool, a test, a preview -- nobody
     /// speaks and no bubble is drawn.

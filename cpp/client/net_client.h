@@ -802,6 +802,16 @@ public:
         teleported_ = false;
         return was;
     }
+    /// True once after the server reported this client's flower walked into a
+    /// `glitch` map trap (ServerMessage::Glitch). Consumed by the App, which
+    /// begins the crash sequence -- the screen glitches, a blue screen fills to
+    /// 100%, and the game is left dead and renamed florr.exe (or, on an install
+    /// that is florr.exe already, restarts into the corrupted desktop).
+    bool takeGlitch() {
+        const bool was = glitched_;
+        glitched_ = false;
+        return was;
+    }
     /// Where the server last put this flower's body -- the join's spawn, or a
     /// realm change's arrival -- for the frames between that message and the
     /// first snapshot of the new body. The view's own self position is zero
@@ -850,6 +860,11 @@ public:
     /// always "System". A screenshot run seeds other channels through it.
     void addLocalChat(const std::string& author, const std::string& text,
                       net::ChatChannel channel = net::ChatChannel::System);
+    /// An announcement made inside the client: the line goes under the Admin
+    /// tab and the banner goes up, exactly as for one that arrived live. Only
+    /// the glitch trap's second crash makes one -- its line is part of the
+    /// scare, not anything an admin said, and nothing is sent anywhere.
+    void addLocalAnnouncement(const std::string& author, const std::string& text);
 
     /// The mean of the last ten round trips, which is what the readout shows:
     /// a single sample jitters too much to read, and the quality band below is
@@ -972,6 +987,24 @@ public:
     bool dead() const { return dead_; }
     const std::string& killerName() const { return killerName_; }
 
+    /// Whether the current death was a `jumpscare` map trap rather than
+    /// combat. While it is set the client plays the fullscreen corruption
+    /// scare and the death card's Continue is red and respawns (requestRespawn)
+    /// at the pad the trap named instead of leaving to the title. Cleared with
+    /// `dead_`, so it only ever describes the death now on screen.
+    bool jumpscareDeath() const { return jumpscareDeath_; }
+
+    /// Set once when a JoinAccepted arrives while this client was ALREADY
+    /// playing -- which only a respawn does, since an ordinary join is answered
+    /// from the title screen. The App reads it to re-enter the world straight
+    /// from the death card (a jumpscare's red Continue), where there is no
+    /// lobby frame to notice the fresh body. Consumed by its reader.
+    bool takeRespawnAccepted() {
+        const bool v = respawnAccepted_;
+        respawnAccepted_ = false;
+        return v;
+    }
+
     /// Set once each time a yggdrasil raised this body. Cleared by whoever
     /// reads it, like `reconnected`: the socket knows the player is alive
     /// again, but only the app can take the death screen down -- and it must
@@ -1017,6 +1050,9 @@ private:
     /// `speakerNetId` also raises a bubble over that flower.
     void pushChat(net::ChatChannel, std::string author, std::string text,
                   std::uint32_t speakerNetId = 0);
+    /// Makes the transcript's last line, an Admin one, the announcement the
+    /// HUD's banner shows (adminAnnouncement()).
+    void raiseAnnouncement();
     void handleDied(ByteReader&);
     void handleRevived(ByteReader&);
     void handleCraftResult(ByteReader&);
@@ -1091,6 +1127,7 @@ private:
     Vec2 realmArrival_;
     bool realmChanged_ = false;
     bool teleported_ = false;
+    bool glitched_ = false;
     Profile profile_;
     std::string sessionToken_;
     std::vector<ChatLine> chat_;
@@ -1165,6 +1202,8 @@ private:
     bool serverDebugStatsFresh_ = false;
 
     bool dead_ = false;
+    bool jumpscareDeath_ = false;
+    bool respawnAccepted_ = false;
     std::string killerName_;
     /// See joinPending().
     bool joinPending_ = false;

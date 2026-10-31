@@ -144,6 +144,28 @@ struct Session {
     /// between bodies, so a title-screen session reads as ordinary ground.
     Realm realm = Realm::Overworld;
 
+    /// A death caused by a `jumpscare` map trap rather than by combat. The
+    /// `Died` the reaper sends is tagged with it so the client plays the
+    /// fullscreen scare and offers a RED Continue, and the next respawn lands
+    /// at `jumpscareRespawn*` instead of the chosen door. Set when a flower
+    /// walks into the trap; cleared once the death has been announced.
+    bool jumpscareDeath = false;
+    /// Whether a jumpscare respawn is owed, and where: the pad the trap named,
+    /// as a realm and a point in it. One life only -- consumed by the next
+    /// spawnPlayer, after which an ordinary death returns to the chosen door.
+    /// Meaningless unless `jumpscareRespawnPending`.
+    bool jumpscareRespawnPending = false;
+    Realm jumpscareRespawnRealm = Realm::Overworld;
+    Vec2 jumpscareRespawnPosition;
+
+    /// Whether this body has already been sent the `glitch` crash. A crashed
+    /// client does not die or move, so its body sits in the trap and the
+    /// movement pass keeps finding it there; without this it would be sent the
+    /// Glitch message every tick. Cleared for each new body (spawnPlayer): a
+    /// client that has crashed before leaves the game instead of dying, and
+    /// its next flower can walk into the trap again.
+    bool glitchSent = false;
+
     /// The arena run's account, while there is one.
     ///
     /// A flower in the PVP ring plays on a scratch copy of its account: a fixed

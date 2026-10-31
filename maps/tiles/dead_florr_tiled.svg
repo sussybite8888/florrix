@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <clipPath id="tile">
+      <rect x="0" y="0" width="256" height="256"/>
+    </clipPath>
+    <g id="dead">
+      <circle cx="0" cy="0" r="25" fill="#ffe763" stroke="#ccb84f" stroke-width="3"/>
+      <g stroke="#222222" stroke-width="3" stroke-linecap="round" fill="none">
+        <path d="M -11 -9 L -3 -1 M -3 -9 L -11 -1"/>
+        <path d="M 3 -9 L 11 -1 M 11 -9 L 3 -1"/>
+      </g>
+      <path d="M -6 10 Q 0 5 6 10" fill="none" stroke="#222222"
+            stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+  <g id="field">
+    <use href="#dead" transform="translate(82.90,38.62) rotate(234.3) scale(0.718)"/>
+    <use href="#dead" transform="translate(137.19,93.62) rotate(20.9) scale(0.827)"/>
+    <use href="#dead" transform="translate(9.60,111.01) rotate(25.1) scale(0.723)"/>
+    <use href="#dead" transform="translate(108.68,211.67) rotate(44.6) scale(0.756)"/>
+    <use href="#dead" transform="translate(160.62,242.61) rotate(207.8) scale(0.799)"/>
+    <use href="#dead" transform="translate(249.92,11.93) rotate(309.0) scale(0.772)"/>
+    <use href="#dead" transform="translate(36.93,30.15) rotate(111.1) scale(0.904)"/>
+    <use href="#dead" transform="translate(46.27,148.89) rotate(230.0) scale(0.793)"/>
+    <use href="#dead" transform="translate(203.36,178.94) rotate(87.9) scale(0.844)"/>
+    <use href="#dead" transform="translate(186.74,73.71) rotate(352.9) scale(0.730)"/>
+    <use href="#dead" transform="translate(15.09,196.67) rotate(46.6) scale(0.762)"/>
+  </g>
+  </defs>
+  <g clip-path="url(#tile)">
+    <use href="#field" transform="translate(-256,-256)"/>
+    <use href="#field" transform="translate(0,-256)"/>
+    <use href="#field" transform="translate(256,-256)"/>
+    <use href="#field" transform="translate(-256,0)"/>
+    <use href="#field" transform="translate(0,0)"/>
+    <use href="#field" transform="translate(256,0)"/>
+    <use href="#field" transform="translate(-256,256)"/>
+    <use href="#field" transform="translate(0,256)"/>
+    <use href="#field" transform="translate(256,256)"/>
+  </g>
+</svg>

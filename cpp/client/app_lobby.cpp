@@ -222,6 +222,11 @@ void App::updateLobby() {
         // reference accepts it: with nothing focused, Enter opens chat.
         if (window_.keyPressed(Key::Enter)) {
             nameField_.blur();
+            // Entering the game is the one gesture the browser will take a
+            // fullscreen request off, so it is asked for here and at Ready --
+            // the two ways a player starts a game by hand. A scripted join
+            // (above) is not a gesture and asks for nothing.
+            window_.requestFullscreen();
             startGame();
         } else if (window_.keyPressed(Key::Escape)) {
             nameField_.blur();
@@ -324,7 +329,12 @@ void App::updateLobby() {
                 chatOpen_ = false;
             }
 
-            if (insideInclusive(layout.ready, mouse)) startGame();
+            if (insideInclusive(layout.ready, mouse)) {
+                // See the Enter path above: Ready is a user gesture, so it can
+                // carry the fullscreen the crash later wants to fill the screen.
+                window_.requestFullscreen();
+                startGame();
+            }
         }
     }
 }
@@ -393,9 +403,13 @@ const SvgDocument* App::titleBackground(const std::string& backdrop) {
     // The ground artworks, by the name a spawn point's `backdrop` names them
     // with -- which defaults to the spawn point's own id, so a point called
     // `desert` gets the desert without saying anything. Anything unrecognised
-    // tiles the garden's, which is what the browser build did too.
+    // tiles the garden's green grass field, which is what the start maps
+    // (lv/lv2/lv3, none of them a named biome) all fall through to: the title
+    // screen is the green garden the game opens on. `land.svg` is no longer
+    // that field -- the horror mod recoloured it to the corrupted red ground
+    // -- so the garden draws its grass tile instead.
     static const std::unordered_map<std::string, std::string> kFiles = {
-        {"default", "land.svg"},     {"garden", "land.svg"},
+        {"default", "grass_c_0.svg"}, {"garden", "grass_c_0.svg"},
         {"desert", "desert.svg"},
         {"ocean", "ocean.svg"},   {"hel", "hel.svg"},       {"ant_hell", "ant_hell.svg"},
         {"sewers", "sewers.svg"}, {"jungle", "jungle.svg"}, {"computer", "computer.svg"},
@@ -406,8 +420,10 @@ const SvgDocument* App::titleBackground(const std::string& backdrop) {
         {"pyramid", "pyramid_floor_c_0.svg"},
     };
     const auto entry = kFiles.find(backdrop);
-    const std::string file = entry == kFiles.end() ? "land.svg" : entry->second;
+    return stagedArt(entry == kFiles.end() ? "grass_c_0.svg" : entry->second);
+}
 
+const SvgDocument* App::stagedArt(const std::string& file) {
     // Compiled on first use and kept: a player flicking along the picker would
     // otherwise re-parse an SVG per frame.
     auto cached = titleBackgrounds_.find(file);
@@ -432,6 +448,10 @@ void App::drawTitleBackground(Canvas& canvas, double time) {
         else if (!choice.biome.empty()) backdrop = choice.biome;
         break;
     }
+    // Once a glitch trap has crashed this install the title is florr.exe
+    // (gameTitle), and its ground is hel's, whichever door is chosen: the
+    // garden the game opened on does not come back.
+    if (menus_.settings().glitched) backdrop = "hel";
     const SvgDocument* texture = titleBackground(backdrop);
 
     // A fixed step per rendered frame rather than elapsed seconds: this is the
@@ -680,7 +700,7 @@ void App::drawLobby(Canvas& canvas, double time) {
     TextStyle title;
     title.size = 48.0;
     title.align = Align::Centre;
-    text(canvas, "florr.exe", centreX, centreY - 200.0, title);
+    text(canvas, gameTitle(), centreX, centreY - 200.0, title);
 
     const LobbyLayout layout = lobbyLayout(canvas.width(), canvas.height());
 

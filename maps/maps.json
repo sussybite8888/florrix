@@ -19,6 +19,8 @@
     "to other twins. See cpp/shared/game/prestige.h."
   ],
   "maps": [
-    { "file": "garden.tmj", "prestige": true }
+    { "file": "lv.tmj", "prestige": false },
+    { "file": "lv2.tmj", "prestige": false },
+    { "file": "lv3.tmj", "prestige": false }
   ]
 }

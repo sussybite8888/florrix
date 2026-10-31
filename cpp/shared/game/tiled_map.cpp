@@ -24,6 +24,8 @@ constexpr struct { const char* layer; const char* kind; } kObjectLayers[] = {
     {"player_spawns", "player_spawn"},
     {"teleporters", "teleporter"},
     {"npcs", "npc"},
+    {"jumpscares", "jumpscare"},
+    {"glitches", "glitch"},
 };
 
 /// The custom properties each kind of object carries through verbatim.
@@ -36,6 +38,8 @@ constexpr struct { const char* kind; const char* properties[9]; } kObjectPropert
     {"player_spawn", {"spawnId", "label", "color", "order", "backdrop", "biome", "pickable", nullptr}},
     {"teleporter",   {"id", "to", "targetMap", "targetSpawn", "color", "radius", nullptr}},
     {"npc",          {"npc", "rarity", nullptr}},
+    {"jumpscare",    {"id", "to", "targetMap", "targetSpawn", nullptr}},
+    {"glitch",       {"id", nullptr}},
 };
 
 /// Tiled's flip flags, in the top three bits of a gid.

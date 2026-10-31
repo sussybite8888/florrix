@@ -120,6 +120,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::SetUsernameResult:   return "setUsernameResult";
         case net::ServerMessage::Teleported:          return "teleported";
         case net::ServerMessage::ProfileDelta:        return "profileDelta";
+        case net::ServerMessage::Glitch:              return "glitch";
     }
     return "unknown";
 }
@@ -153,6 +154,7 @@ void NetClient::disconnect() {
     view_.clear();
     chatBubbles_.clear();
     dead_ = false;
+    jumpscareDeath_ = false;
     revived = false;
     // An explicit disconnect is a decision, not an accident: nothing redials
     // after one. connect() re-arms by dialling.
@@ -335,6 +337,7 @@ void NetClient::forgetAccount() {
     view_.clear();
     chatBubbles_.clear();
     dead_ = false;
+    jumpscareDeath_ = false;
     revived = false;
     killerName_.clear();
 
@@ -376,6 +379,7 @@ void NetClient::forgetWorld() {
     view_.clear();
     chatBubbles_.clear();
     dead_ = false;
+    jumpscareDeath_ = false;
     revived = false;
 }
 
@@ -1134,6 +1138,7 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::MazeInfo:      handleMazeInfo(reader); break;
         case net::ServerMessage::RealmChange:   handleRealmChange(reader); break;
         case net::ServerMessage::Teleported:    teleported_ = true; break;
+        case net::ServerMessage::Glitch:        glitched_ = true; break;
         case net::ServerMessage::ChangePasswordResult: handleChangePasswordResult(reader); break;
         case net::ServerMessage::SetUsernameResult: handleSetUsernameResult(reader); break;
         case net::ServerMessage::OracleResult:  handleOracleResult(reader); break;
@@ -1713,8 +1718,14 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
     // The grid is in; give the realm its exact geometry from the local file.
     installLocalCollision(realm);
 
+    // A JoinAccepted while already playing is a RESPAWN, not a first join: the
+    // server answers a jumpscare's Respawn this way, and the client has to
+    // re-enter the world straight from the death card. An ordinary join is
+    // answered from the title screen, where status_ is LoggedIn.
+    if (status_ == Status::Playing) respawnAccepted_ = true;
     status_ = Status::Playing;
     dead_ = false;
+    jumpscareDeath_ = false;
     revived = false;
     view_.clear();
     chatBubbles_.clear();
@@ -1813,6 +1824,11 @@ void NetClient::addLocalChat(const std::string& author, const std::string& text,
     pushChat(channel, author, text);
 }
 
+void NetClient::addLocalAnnouncement(const std::string& author, const std::string& text) {
+    pushChat(net::ChatChannel::Admin, author, text);
+    raiseAnnouncement();
+}
+
 const CustomSkin* NetClient::findSkin(const std::string& id) const {
     if (id.empty()) return nullptr;
     for (const CustomSkin& skin : skinCatalog_) {
@@ -1871,11 +1887,13 @@ void NetClient::handleChat(ByteReader& reader) {
     // Live lines only: a backlog replays what was said before this client
     // was here (handleChatHistory), and a banner for it would be news a
     // minute old.
-    if (channel == net::ChatChannel::Admin) {
-        adminAnnouncement_.author = chat_.back().author;
-        adminAnnouncement_.text = markupPlainText(chat_.back().text);
-        ++adminAnnouncement_.sequence;
-    }
+    if (channel == net::ChatChannel::Admin) raiseAnnouncement();
+}
+
+void NetClient::raiseAnnouncement() {
+    adminAnnouncement_.author = chat_.back().author;
+    adminAnnouncement_.text = markupPlainText(chat_.back().text);
+    ++adminAnnouncement_.sequence;
 }
 
 void NetClient::handleChatHistory(ByteReader& reader) {
@@ -1927,14 +1945,17 @@ void NetClient::handleDied(ByteReader& reader) {
     killerName_ = reader.str();
     reader.u32();   // xp lost
     reader.u32();   // ticks survived
+    const bool jumpscare = reader.u8() != 0;
     if (!reader.ok()) return;
     dead_ = true;
+    jumpscareDeath_ = jumpscare;
 }
 
 void NetClient::handleRevived(ByteReader& reader) {
     std::string reviverName = reader.str();
     if (!reader.ok()) return;
     dead_ = false;
+    jumpscareDeath_ = false;
     killerName_.clear();
     revived = true;
     // Composed here for the same reason the death card composes its own line:
@@ -2037,6 +2058,7 @@ void NetClient::handleSessionReplaced(ByteReader& reader) {
     view_.clear();
     chatBubbles_.clear();
     dead_ = false;
+    jumpscareDeath_ = false;
     revived = false;
     sessionReplaced = true;
 }

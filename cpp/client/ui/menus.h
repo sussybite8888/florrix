@@ -310,6 +310,15 @@ struct ClientSettings {
     /// the chosen door's prestige twin (shared/game/prestige.h). Only acted
     /// on while the profile holds the Prestige talent.
     bool prestige = false;
+    /// Whether a `glitch` map trap has ever crashed this install. Once it has,
+    /// the game is "florr.exe" rather than "florr.io" on every screen, over
+    /// hel's ground rather than the garden's, for good: the title text
+    /// (App::gameTitle) and backdrop (App::drawTitleBackground) read it, and it
+    /// is persisted here
+    /// the instant the crash fires so a forced reload cannot wash it away. Not
+    /// a comfort setting -- a one-way corruption flag the player cannot clear
+    /// from the menu, only by deleting their settings.
+    bool glitched = false;
     /// Whether the eleven-step tutorial has been finished or skipped, and how
     /// far it had got. The TypeScript client kept the same pair in
     /// localStorage as `tutorial_completed` and `tutorial_step`; they ride here

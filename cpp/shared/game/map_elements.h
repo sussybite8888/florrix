@@ -87,6 +87,12 @@ enum class MapElementKind : std::uint8_t {
     Teleporter,    ///< a pad, which leads to another map
     Npc,           ///< where a friendly NPC stands -- a point, or an area it
                    ///< stands somewhere in
+    Jumpscare,     ///< a trap AREA: walking into it kills the flower with a
+                   ///< fullscreen scare and respawns it at the pad it names
+    Glitch,        ///< a trap AREA: walking into it crashes the client -- the
+                   ///< screen glitches, a Windows blue screen fills to 100%,
+                   ///< and the game is left dead, renamed florr.exe. Terminal:
+                   ///< it names no destination and nobody comes back from it
 };
 
 /// One annotation, in world coordinates. The numbers are already world units --
@@ -216,11 +222,14 @@ struct MapElement {
     /// ground first without being the first map loaded.
     double order = 0.0;
 
-    /// Teleporters only: the id of the map this pad leads to. A pad naming no
-    /// map is scenery -- it charges up and goes nowhere, which is reported at
-    /// load rather than at the moment a player stands on it.
+    /// Teleporters AND jumpscares: the id of the map this leads to. A pad
+    /// naming no map is scenery -- it charges up and goes nowhere, which is
+    /// reported at load rather than at the moment a player stands on it. A
+    /// jumpscare that resolves nowhere does not fire; both are destinations in
+    /// the same sense, so they read the same fields and WorldMaps resolves
+    /// them the same way (resolveTeleporter).
     std::string targetMap;
-    /// Teleporters only: the spawn point in `targetMap` the pad arrives at.
+    /// Teleporters and jumpscares: the spawn point in `targetMap` arrived at.
     /// Empty means the target map's default spawn.
     std::string targetSpawn;
     /// Teleporters only: an explicit arrival point in the target map's
@@ -229,12 +238,13 @@ struct MapElement {
     Vec2 teleportTo;
     bool hasTeleportTo = false;
     /// Teleporters only: this pad's own name, from its `id` property (or the
-    /// object's name), which another pad's `to` aims at.
+    /// object's name), which another pad's -- or a jumpscare's -- `to` aims at.
     std::string padId;
-    /// Teleporters only: the pad this one leads to, by its `id` -- on this
-    /// map or any other, `<map id>:<pad id>` when a bare id is ambiguous.
+    /// Teleporters and jumpscares: the pad this one leads to, by its `id` -- on
+    /// this map or any other, `<map id>:<pad id>` when a bare id is ambiguous.
     /// WorldMaps resolves it at load into `targetMap` and `teleportTo` (the
-    /// partner's centre), so everything downstream sees an ordinary pad.
+    /// partner's centre), so everything downstream sees an ordinary
+    /// destination. A jumpscare names the pad its victim respawns at this way.
     /// Ignored when `targetMap` is given.
     std::string toPad;
     /// Teleporters only: how big the pad is, from its `radius` property --

@@ -1,0 +1,151 @@
+{ "compressionlevel":-1,
+ "height":10,
+ "infinite":false,
+ "layers":[
+        {
+         "data":[63, 61, 64, 63, 63, 64, 61, 61,
+            64, 62, 64, 65, 62, 64, 63, 65,
+            63, 63, 61, 65, 64, 63, 63, 65,
+            65, 64, 64, 62, 64, 65, 64, 61,
+            61, 62, 64, 64, 65, 62, 63, 64,
+            63, 62, 62, 63, 65, 64, 61, 64,
+            63, 62, 62, 61, 62, 64, 64, 65,
+            63, 65, 63, 65, 62, 61, 63, 61,
+            64, 63, 63, 63, 64, 63, 61, 63,
+            63, 65, 65, 62, 63, 63, 63, 63],
+         "height":10,
+         "id":1,
+         "name":"background",
+         "opacity":1,
+         "type":"tilelayer",
+         "visible":true,
+         "width":8,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "data":[1073741848, 536870934, 2684354582, 2684354582, 2684354582, 2684354582, 2684354582, 3221225496,
+            22, 0, 0, 0, 0, 0, 0, 2147483670,
+            22, 0, 0, 0, 0, 0, 0, 2147483670,
+            1073741846, 0, 0, 0, 0, 0, 0, 3221225494,
+            22, 0, 0, 0, 0, 0, 0, 3221225494,
+            22, 0, 0, 0, 0, 0, 0, 3221225494,
+            22, 0, 0, 0, 0, 0, 0, 3221225494,
+            22, 0, 0, 0, 0, 0, 0, 3221225494,
+            22, 0, 0, 0, 0, 0, 0, 3221225494,
+            3758096408, 3758096406, 3758096406, 3758096406, 3758096406, 1610612758, 1610612758, 2147483672],
+         "height":10,
+         "id":2,
+         "name":"dirt",
+         "opacity":1,
+         "properties":[
+                {
+                 "name":"has_collision",
+                 "type":"bool",
+                 "value":true
+                }],
+         "type":"tilelayer",
+         "visible":true,
+         "width":8,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "data":[102, 102, 102, 102, 102, 102, 102, 102,
+            102, 102, 102, 102, 102, 102, 102, 102,
+            102, 102, 102, 102, 102, 102, 102, 102,
+            102, 102, 102, 102, 102, 102, 102, 102,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0],
+         "height":10,
+         "id":5,
+         "name":"dead_players",
+         "opacity":1,
+         "type":"tilelayer",
+         "visible":true,
+         "width":8,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":3,
+         "name":"teleporters",
+         "objects":[
+                {
+                 "height":0,
+                 "id":1,
+                 "name":"",
+                 "point":true,
+                 "properties":[
+                        {
+                         "name":"color",
+                         "type":"color",
+                         "value":"#ffa20000"
+                        }, 
+                        {
+                         "name":"id",
+                         "type":"string",
+                         "value":"lv2-1"
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":0,
+                 "x":1024,
+                 "y":2272
+                }],
+         "opacity":1,
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":6,
+         "name":"jumpscares",
+         "objects":[
+                {
+                 "height":612,
+                 "id":3,
+                 "name":"",
+                 "properties":[
+                        {
+                         "name":"to",
+                         "type":"string",
+                         "value":"lv3"
+                        }],
+                 "rotation":0,
+                 "type":"jumpscare",
+                 "visible":true,
+                 "width":2052,
+                 "x":-8,
+                 "y":440
+                }],
+         "opacity":1,
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
+        }],
+ "nextlayerid":7,
+ "nextobjectid":4,
+ "orientation":"orthogonal",
+ "renderorder":"right-down",
+ "tiledversion":"1.10.1",
+ "tileheight":256,
+ "tilesets":[
+        {
+         "firstgid":1,
+         "source":"tileset.tsj"
+        }],
+ "tilewidth":256,
+ "type":"map",
+ "version":"1.10",
+ "width":8
+}

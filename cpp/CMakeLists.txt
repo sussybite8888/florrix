@@ -306,6 +306,7 @@ add_library(flix_client STATIC
   client/ui/mobile_controls.cpp
   client/ui/touch_scroll.cpp
   client/ui/tutorial.cpp
+  client/ui/xp_desktop.cpp
   client/render/art_cache.cpp
   client/render/darkness.cpp
   client/render/mob_art.cpp

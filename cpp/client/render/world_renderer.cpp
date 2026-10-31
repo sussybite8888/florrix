@@ -1737,6 +1737,24 @@ void WorldRenderer::drawTerrain(Canvas& canvas, const Camera& camera, Realm real
     const int rows = map->height();
     if (cols <= 0 || rows <= 0) return;
 
+    // The overworld is a garden: its ground is the garden green under the
+    // map's own tiles, so the start map reads as the classic florr field even
+    // where the author left a cell bare. The fill is the MAP's rectangle and
+    // not the viewport, so everything past the edge stays the black cleared
+    // above -- the world ends at a visible border rather than a green field
+    // that runs on forever. Only the overworld, and only once there IS a map
+    // -- a renderer holding none still draws void (returned above), which the
+    // tile-layer design and its test rely on. Garden is section 0 (terrain.h).
+    if (realm == Realm::Overworld) {
+        const Vec2 topLeft = camera.worldToScreen({0.0, 0.0});
+        const Vec2 bottomRight =
+            camera.worldToScreen({cols * kTileSize, rows * kTileSize});
+        ui::setFill(canvas, biomeOf(0).ground);
+        canvas.fillRect(static_cast<float>(topLeft.x), static_cast<float>(topLeft.y),
+                        static_cast<float>(bottomRight.x - topLeft.x),
+                        static_cast<float>(bottomRight.y - topLeft.y));
+    }
+
     // The cells whose artwork can reach the screen, and NOT ONE MORE. A cell
     // is drawn over exactly its own square grown by kTileOverlap, so that
     // overlap is the whole margin this wants. A kTileSize margin -- the
@@ -2849,6 +2867,16 @@ void WorldRenderer::drawDefaultFlower(Canvas& canvas, const RemoteEntity& entity
     const bool active = (entity.faceFlags & (FaceAttacking | FaceDefending)) != 0;
     drawFace(canvas, entity.faceFlags, entity.equipFlags, entity.eyeX, entity.eyeY,
              active ? 4.0 : 14.5, timeSeconds);
+}
+
+void WorldRenderer::drawFlowerInColor(Canvas& canvas, const RemoteEntity& entity,
+                                      std::uint32_t bodyColor, double timeSeconds) const {
+    // drawFace ranks every status colour above the body colour it is handed,
+    // so those bits come off. The mouth is the idle smile: at 14.5 the attack
+    // fangs, which want a mouth of 8 or less, never show either.
+    const unsigned statusColors = FaceHasCorruption | FaceUndead | FacePoisoned | FaceDandelioned;
+    drawFace(canvas, static_cast<std::uint8_t>(entity.faceFlags & ~statusColors), entity.equipFlags,
+             entity.eyeX, entity.eyeY, 14.5, timeSeconds, bodyColor);
 }
 
 void WorldRenderer::drawCutterBlade(Canvas& canvas, std::uint16_t equipFlags,

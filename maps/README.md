@@ -367,7 +367,7 @@ never as a collision bug.
 ## The object layers
 
 Annotations are grouped by kind, one Tiled object layer each, so a set can be
-hidden while another is worked on. **These four layer names are read**, unlike
+hidden while another is worked on. **These five layer names are read**, unlike
 the tile layers':
 
 | layer | holds |
@@ -376,15 +376,17 @@ the tile layers':
 | `player_spawns` | doors: where a player arrives — rectangles |
 | `teleporters` | pads: where a player leaves — points |
 | `npcs` | NPCs: who stands where — points, or areas they stand somewhere in |
+| `jumpscares` | traps: walk in, die with a scare, respawn elsewhere — rectangles |
 
 The game never sees the grouping beyond the kind: every reader filters by kind
 before it looks at order, so only the order *within* a layer is observable, and
 that is preserved.
 
 An object's **Class** (Tiled's *Class* field; *Type* in older Tiled) may be left
-empty, or set to its kind (`spawn`, `player_spawn`, `teleporter`, `npc`) or to
-its layer's name (`npcs` on the `npcs` layer, say). Any other class is an object
-on the wrong layer: it is skipped, and the load says so on stderr.
+empty, or set to its kind (`spawn`, `player_spawn`, `teleporter`, `npc`,
+`jumpscare`) or to its layer's name (`npcs` on the `npcs` layer, say). Any other
+class is an object on the wrong layer: it is skipped, and the load says so on
+stderr.
 
 ### `spawns` — bands and regions
 
@@ -686,6 +688,36 @@ A pad naming no map is scenery: it charges up and goes nowhere, and that is
 reported at load rather than at the moment a player stands on it. Stepping
 through one is a `RealmChange`, because each map is its own coordinate space —
 as is a respawn that crosses maps.
+
+### `jumpscares` — traps
+
+A jumpscare is a **rectangle** (or polygon) a flower walks into, not a point:
+the instant a flower's centre enters it, the flower **dies for real** — its XP
+and petals are lost exactly as a mob's kill would take them — and its client
+slams a corrupted flower over the whole screen and reddens the death card's
+**Continue**. Pressing that red Continue does not go back to the title: it
+respawns the flower at the pad the trap names, and play goes on there.
+
+It names where to send the body the same way a pad does, and is linked at load
+the same way:
+
+| property | meaning |
+| --- | --- |
+| `to` | the `id` of a `teleporters` pad the victim respawns at, on this map or any other. Write `<map id>:<pad id>` if a bare id is used on more than one map |
+
+The pad named by `to` is an ordinary `teleporters` object; it needs only an
+`id`, and nothing has to lead out of it — a pad with an `id` and no `to` is a
+one-way arrival, which is all a trap's destination has to be. The older
+`targetMap` / `targetSpawn` / `teleportToX`,`teleportToY` work here too, with the
+same meaning and the same precedence (`targetMap` wins over `to`), for a trap
+that wants a door or a bare coordinate instead of a pad.
+
+A trap that resolves nowhere — no `to`, no `targetMap`, or a `to` that names no
+pad — does not fire at all: it is reported at load rather than killing a flower
+it has no destination to send anywhere. A respawn that crosses maps is a
+`RealmChange` for the reason a pad's is. Draw the rectangle over the ground the
+trap should cover; like every annotation its `x`/`y`/`width`/`height` are world
+units already, one Tiled pixel to one world unit.
 
 ### `npcs` — NPCs
 

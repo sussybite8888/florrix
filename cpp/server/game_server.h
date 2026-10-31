@@ -1082,6 +1082,19 @@ private:
     /// it keeps the death card over a flower it will not steer.
     void onPlayerRevived(Entity revived, Entity reviver);
 
+    /// A flower walked into a `jumpscare` map trap. The movement pass found it
+    /// and resolved the pad the trap names into `realm`/`position`; this kills
+    /// the flower for real (the reaper then loses its XP and petals), tags the
+    /// death so its `Died` plays the scare, and arms the next respawn there.
+    void onJumpscare(Entity entity, Realm realm, Vec2 position);
+
+    /// A flower walked into a `glitch` map trap. Sends that one client the
+    /// Glitch message, which crashes it: it plays the terminal glitch/blue
+    /// screen and stops. The body is left where it fell -- the client is dead
+    /// and will not steer it, and the socket closing on the player's restart is
+    /// what finally takes it out of the world.
+    void onGlitch(Entity entity);
+
     /// Every mob body in `realm`, as the discs a spawn point has to clear. One
     /// realm's, because a spawn is judged crowded by what stands on ITS map,
     /// not by a mob at the same numbers on another. Rebuilt per call: a spawn

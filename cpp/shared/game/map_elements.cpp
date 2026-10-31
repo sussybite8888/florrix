@@ -476,6 +476,8 @@ void MapData::adopt(const Json& array) {
         else if (kind == "player_spawn") element.kind = MapElementKind::PlayerSpawn;
         else if (kind == "teleporter") element.kind = MapElementKind::Teleporter;
         else if (kind == "npc") element.kind = MapElementKind::Npc;
+        else if (kind == "jumpscare") element.kind = MapElementKind::Jumpscare;
+        else if (kind == "glitch") element.kind = MapElementKind::Glitch;
         else continue;   // an annotation this build has no meaning for
         element.bounds = {value["x"].asDouble(), value["y"].asDouble(), value["width"].asDouble(),
                           value["height"].asDouble()};
@@ -569,13 +571,17 @@ void MapData::adopt(const Json& array) {
                 element.teleportTo = {destination["x"].asDouble(), destination["y"].asDouble()};
                 element.hasTeleportTo = true;
             }
-            if (element.kind == MapElementKind::Teleporter) {
+            if (element.kind == MapElementKind::Teleporter ||
+                element.kind == MapElementKind::Jumpscare) {
                 // A pad's name: its `id`, or else the object's Tiled name,
-                // which the reader hands over as `spawnId`.
+                // which the reader hands over as `spawnId`. A jumpscare is
+                // never aimed AT -- nothing reads its `padId` -- but its `to`
+                // names the pad its victim respawns at, linked by linkPads()
+                // into a `targetMap`/`teleportTo` exactly as a pad's is.
                 element.padId = properties["id"].asString();
                 if (element.padId.empty()) element.padId = element.spawnId;
                 element.toPad = properties["to"].asString();
-                if (properties.contains("radius")) {
+                if (element.kind == MapElementKind::Teleporter && properties.contains("radius")) {
                     const double radius = properties["radius"].asDouble(0.0);
                     if (radius > 0.0) {
                         element.padRadius = radius;
@@ -1114,18 +1120,24 @@ void WorldMaps::index() {
     const std::vector<const MapElement*> arrivals = linkPads();
     retargetPrestigePads();
 
-    // Teleporters are checked HERE, once, rather than when a player stands on
-    // one: a pad aimed at a map nobody staged is a map bug, and the moment to
-    // find out is when the server starts, not when somebody falls through it.
+    // Teleporters and jumpscares are checked HERE, once, rather than when a
+    // player stands on one: a destination aimed at a map nobody staged is a
+    // map bug, and the moment to find out is when the server starts, not when
+    // somebody falls through it. Both carry the same destination fields and
+    // resolve the same way, so they are validated together.
     for (const MapData& map : maps_) {
         for (const MapElement& element : map.elements()) {
-            if (element.kind != MapElementKind::Teleporter) continue;
-            const std::string where = "[" + map.id() + "] teleporter at (" +
+            const bool jumpscare = element.kind == MapElementKind::Jumpscare;
+            if (element.kind != MapElementKind::Teleporter && !jumpscare) continue;
+            const std::string where = "[" + map.id() + "] " +
+                                      (jumpscare ? "jumpscare" : "teleporter") + " at (" +
                                       std::to_string(static_cast<long>(element.centre().x)) + ", " +
                                       std::to_string(static_cast<long>(element.centre().y)) + ")";
             if (element.targetMap.empty()) {
                 // A broken `to` was reported by linkPads; a pad that is only
-                // ever arrived at is an exit, not a mistake.
+                // ever arrived at is an exit, not a mistake -- but nothing ever
+                // arrives AT a jumpscare, so one that resolves nowhere is one
+                // that will kill without ever sending its victim anywhere.
                 const bool arrivedAt =
                     std::find(arrivals.begin(), arrivals.end(), &element) != arrivals.end();
                 if (element.toPad.empty() && !arrivedAt) {
@@ -1154,7 +1166,13 @@ std::vector<const MapElement*> WorldMaps::linkPads() {
     std::vector<const MapElement*> arrivals;
     for (std::size_t from = 0; from < maps_.size(); ++from) {
         for (MapElement& pad : maps_[from].elements_) {
-            if (pad.kind != MapElementKind::Teleporter || pad.toPad.empty()) continue;
+            // A jumpscare links to the pad its victim respawns at exactly as a
+            // pad links to its partner: by `to`, into `targetMap`/`teleportTo`.
+            if ((pad.kind != MapElementKind::Teleporter &&
+                 pad.kind != MapElementKind::Jumpscare) ||
+                pad.toPad.empty()) {
+                continue;
+            }
             // An explicit `targetMap` is the older way of saying where a pad
             // goes, and the author wrote it on purpose.
             if (!pad.targetMap.empty()) continue;
@@ -1199,7 +1217,9 @@ std::vector<const MapElement*> WorldMaps::linkPads() {
                 if (target != nullptr && i == from) break;
             }
 
-            const std::string where = "[" + maps_[from].id() + "] teleporter \"" + pad.padId +
+            const char* word =
+                pad.kind == MapElementKind::Jumpscare ? "jumpscare" : "teleporter";
+            const std::string where = "[" + maps_[from].id() + "] " + word + " \"" + pad.padId +
                                       "\" at (" +
                                       std::to_string(static_cast<long>(pad.centre().x)) + ", " +
                                       std::to_string(static_cast<long>(pad.centre().y)) + ")";

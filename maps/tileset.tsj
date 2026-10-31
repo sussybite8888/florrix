@@ -8,7 +8,7 @@
  "margin":0,
  "name":"tileset",
  "spacing":0,
- "tilecount":90,
+ "tilecount":92,
  "tiledversion":"1.10.1",
  "tileheight":256,
  "tilerendersize":"grid",
@@ -2570,6 +2570,18 @@
              "x":0,
              "y":0
             }
+        }, 
+        {
+         "id":100,
+         "image":"tiles\/not_florr.svg",
+         "imageheight":256,
+         "imagewidth":256
+        }, 
+        {
+         "id":101,
+         "image":"tiles\/dead_florr_tiled.svg",
+         "imageheight":256,
+         "imagewidth":256
         }],
  "tilewidth":256,
  "transformations":

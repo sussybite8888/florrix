@@ -645,6 +645,48 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
         // points at, so the Transform is fetched again after.
         TeleporterState& state = world.ensure<TeleporterState>(e);
         transform = world.tryGet<Transform>(e);
+        if (!transform) continue;
+
+        // A jumpscare trap is checked before the pads, and takes priority over
+        // one drawn on the same ground: standing in it kills the flower and
+        // arms its respawn at the pad the trap names. Only the connection layer
+        // can do any of that, so it is handed up (onJumpscare) exactly as a
+        // pad's realm change is. A trap that resolves nowhere is left inert --
+        // it is reported at load, and killing without a destination to come
+        // back at would strand the player on the death card.
+        if (onJumpscare) {
+            bool fired = false;
+            for (const MapElement& element : map->elements()) {
+                if (element.kind != MapElementKind::Jumpscare) continue;
+                if (!element.contains(transform->position)) continue;
+                WorldMaps::Destination destination;
+                if (!worldMaps->resolveTeleporter(element, teleportRng_, *teleportTerrain_,
+                                                   destination)) {
+                    continue;
+                }
+                onJumpscare(e, destination.realm, destination.position);
+                fired = true;
+                break;
+            }
+            // The body is a corpse now; it does not also get pulled by a pad.
+            if (fired) continue;
+        }
+
+        // A glitch trap: walking into it crashes the client. Checked the same
+        // way, and handed up the same way -- the message that crashes it is the
+        // connection layer's. No destination, nothing resolved: it is terminal.
+        if (onGlitch) {
+            bool fired = false;
+            for (const MapElement& element : map->elements()) {
+                if (element.kind != MapElementKind::Glitch) continue;
+                if (!element.contains(transform->position)) continue;
+                onGlitch(e);
+                fired = true;
+                break;
+            }
+            if (fired) continue;
+        }
+
         const MapData::TeleportStep step =
             map->stepTeleporters(transform->position, dt, nowMillis, state);
         // The suction is committed raw, with no wall resolution and no world

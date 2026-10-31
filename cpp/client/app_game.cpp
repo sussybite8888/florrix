@@ -17,14 +17,28 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <cmath>
 #include <string>
 #include <vector>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
+#include "client/render/art_cache.h"
 #include "client/ui/draw.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_style.h"
 #include "shared/game/constants.h"
+
+#ifdef __EMSCRIPTEN__
+// The runtime's own abort(), with the stop screen's stop code as its reason:
+// the page's onAbort puts it on its status line, and the console gets
+// "Aborted(...)". The plain C abort() would hand onAbort an empty reason. It
+// throws, so it never returns.
+EM_JS(void, flix_glitch_abort, (), { abort('CRITICAL_PROCESS_DIED'); });
+#endif
 
 namespace flix {
 
@@ -78,6 +92,10 @@ constexpr double kDeathContinueRim = 6.0;
 constexpr double kDeathContinueRadius = 4.0;
 constexpr double kDeathContinueTextSize = 24.0;
 constexpr std::uint32_t kDeathContinueFill = 0x62CE49u;
+/// A jumpscare death's Continue is the corruption red of the flower that
+/// slammed the screen (FaceHasCorruption's body colour), not the ordinary
+/// green: it does not go home, it respawns you at the pad the trap named.
+constexpr std::uint32_t kDeathContinueJumpscareFill = 0xD91313u;
 constexpr double kDeathCloseY = 140.0;
 constexpr double kDeathCloseWidth = 68.0;
 constexpr double kDeathCloseHeight = 24.0;
@@ -163,6 +181,18 @@ void drawDeathFlower(Canvas& canvas, const WorldRenderer& renderer, const Sprite
     paintSeats(true);
     canvas.restore();
 }
+
+/// The glitch crash's acts, in seconds: the tear, the stop screen filling 0%
+/// to 100%, and how long it holds at 100% before the client really crashes.
+/// Shared by the draw and the crash, so the last frame drawn is the one the
+/// crash leaves on screen.
+constexpr double kGlitchTearSeconds = 2.4;
+constexpr double kGlitchBsodSeconds = 5.0;
+constexpr double kGlitchCrashHoldSeconds = 1.0;
+
+/// The player's body colour on the stop screen: a step lighter than the
+/// Windows blue behind it, so the flower's own darker rim reads against it.
+constexpr std::uint32_t kGlitchFlowerBlue = 0x4FA6F2u;
 
 } // namespace
 
@@ -392,7 +422,18 @@ void App::updateDead(double dt) {
     // painted, and during the slide-in that is on its way down the screen.
     const DeathCard card = deathCardLayout(window_.width(), window_.height(), deathCardSlide_);
     if (hit(card.continueBox, mouse)) {
-        leaveToTitle();
+        if (net_.jumpscareDeath()) {
+            // A jumpscare's red Continue does not leave to the title: it asks
+            // the server to respawn the flower at the pad the trap named, which
+            // the server answers with a fresh body (pollNetwork re-enters the
+            // world on that accept). The card slides away the way Close's does
+            // so the button cannot be pressed twice while the answer is in
+            // flight.
+            net_.requestRespawn();
+            deathCardVisible_ = false;
+        } else {
+            leaveToTitle();
+        }
         return;
     }
     // Close takes the card away -- it slides back up the way it came -- and
@@ -430,7 +471,8 @@ void App::drawDeathCard(Canvas& canvas, double time) {
     const bool pressing = window_.mouseDown(MouseButton::Left);
     const bool overContinue = hit(card.continueBox, mouse);
     ButtonStyle continueStyle;
-    continueStyle.fill = kDeathContinueFill;
+    continueStyle.fill =
+        net_.jumpscareDeath() ? kDeathContinueJumpscareFill : kDeathContinueFill;
     continueStyle.outlineWidth = kDeathContinueRim;
     continueStyle.radius = kDeathContinueRadius;
     continueStyle.textSize = kDeathContinueTextSize;
@@ -444,6 +486,335 @@ void App::drawDeathCard(Canvas& canvas, double time) {
     closeStyle.radius = kDeathCloseRadius;
     closeStyle.textSize = kDeathCloseTextSize;
     button(canvas, card.closeBox, "Close", overClose, overClose && pressing, closeStyle);
+}
+
+void App::drawJumpscare(Canvas& canvas, double time) {
+    if (jumpscareStartSeconds_ < 0.0) return;
+
+    // The lunge in, a hold staring back, then a fade that hands the screen to
+    // the death card sliding in underneath. Short on purpose: a jumpscare is a
+    // flinch, not a cutscene.
+    constexpr double kGrowSeconds = 0.14;   // the flower rushing the screen
+    constexpr double kHoldSeconds = 0.45;   // full and shaking
+    constexpr double kFadeSeconds = 0.35;   // dissolving to the card
+    const double elapsed = time - jumpscareStartSeconds_;
+    if (elapsed >= kHoldSeconds + kFadeSeconds) {
+        jumpscareStartSeconds_ = -1.0;
+        return;
+    }
+
+    const double w = canvas.width();
+    const double h = canvas.height();
+
+    // Opaque through the hold, then ramps away over the fade so the red card
+    // shows through as the scare lets go.
+    const double alpha = elapsed < kHoldSeconds
+        ? 1.0
+        : std::clamp(1.0 - (elapsed - kHoldSeconds) / kFadeSeconds, 0.0, 1.0);
+
+    // A near-black wash tinted toward the corruption red, so the flash reads as
+    // the flower's own colour rather than a grey screen.
+    setFill(canvas, 0x1A0000u, alpha);
+    canvas.fillRect(0, 0, static_cast<float>(w), static_cast<float>(h));
+
+    // The body's drawn circle is radius 26.5 in the artwork's own units; it is
+    // scaled so the face overflows the shorter screen edge, rushing in over the
+    // first frames and shaking while it holds the way a jumpscare snaps at you.
+    constexpr double kBodyArtRadius = 26.5;
+    const double grow = 0.55 + 0.75 * std::clamp(elapsed / kGrowSeconds, 0.0, 1.0);
+    const double fit = (std::min(w, h) * 0.62) / kBodyArtRadius;
+    const double shake = elapsed < kHoldSeconds ? 10.0 : 0.0;
+    const double jx = std::sin(time * 83.0) * shake;
+    const double jy = std::cos(time * 97.0) * shake;
+
+    // A corrupted flower with dead eyes: FaceHasCorruption paints the body the
+    // same red as the wash and the card's button, and the crossed eyes are the
+    // most unsettling face the renderer draws. No skin, no petals, no kit --
+    // this is the trap's face, not the player's own flower.
+    RemoteEntity flower;
+    flower.kind = net::EntityKind::Player;
+    flower.faceFlags = static_cast<std::uint8_t>(FaceHasCorruption | FaceDeadEyes);
+    flower.radius = kBodyArtRadius;
+
+    canvas.save();
+    canvas.translate(static_cast<float>(w * 0.5 + jx), static_cast<float>(h * 0.5 + jy));
+    canvas.scale(static_cast<float>(fit * grow), static_cast<float>(fit * grow));
+    canvas.setGlobalAlpha(static_cast<float>(alpha));
+    renderer_.drawFlowerBody(canvas, flower, time);
+    canvas.setGlobalAlpha(1.0f);
+    canvas.restore();
+}
+
+void App::drawGlitch(Canvas& canvas, double time) {
+    if (!glitchActive()) return;
+
+    const double w = canvas.width();
+    const double h = canvas.height();
+    const double unit = std::min(w, h);
+    const double elapsed = time - glitchStartSeconds_;
+
+    // Two acts: the frozen screen tearing apart in corruption symbols, then a
+    // Windows blue screen filling to 100% -- which holds there for
+    // kGlitchCrashHoldSeconds before the client really does crash on it
+    // (crashGlitched, after this frame is presented) -- or, on an install that
+    // has crashed before, "restarts" into the corrupted desktop
+    // (recoverFromGlitch). Nothing
+    // here reads input, and the client does not update behind it.
+    constexpr double kTearSeconds = kGlitchTearSeconds;
+    constexpr double kBsodSeconds = kGlitchBsodSeconds;   // 0% -> 100% over this
+    const double bsod = elapsed - kTearSeconds;
+
+    // Cheap time-seeded noise in [0,1): the tear re-rolls every frame without
+    // any RNG state leaking into a draw path.
+    const auto noise = [](double a) {
+        const double s = std::sin(a * 12.9898) * 43758.5453;
+        return s - std::floor(s);
+    };
+
+    if (elapsed < kTearSeconds) {
+        // ACT ONE -- the frozen world beneath tears apart. The re-roll clock
+        // steps ~16x a second so the glitch stutters rather than smears.
+        const double tick = std::floor(time * 16.0);
+        for (int i = 0; i < 26; ++i) {
+            if (noise(tick * 1.7 + i * 3.1) < 0.5) continue;
+            const double y = noise(tick + i * 7.3) * h;
+            const double barH = 2.0 + noise(tick * 2.0 + i) * 28.0;
+            const double dx = (noise(tick * 3.0 + i * 5.0) - 0.5) * 90.0;
+            const std::uint32_t tint =
+                (i % 3 == 0) ? 0x00FFFFu : (i % 3 == 1) ? 0xFF00FFu : 0xFFFFFFu;
+            setFill(canvas, tint, 0.10 + noise(tick + i) * 0.22);
+            canvas.fillRect(static_cast<float>(dx), static_cast<float>(y),
+                            static_cast<float>(w), static_cast<float>(barH));
+        }
+        // Darkening toward the blue screen it is about to cut to.
+        setFill(canvas, 0x000000u, std::clamp(elapsed / kTearSeconds, 0.0, 1.0) * 0.6);
+        canvas.fillRect(0, 0, static_cast<float>(w), static_cast<float>(h));
+
+        // Random corruption symbols strewn across the whole screen in place of
+        // any words -- re-rolled on the stutter clock so they jump, flicker and
+        // split like a signal coming apart. No message, just noise that got in.
+        static const char* const kGlyphs[] = {
+            "!", "@", "#", "$", "%", "&", "*", "?", "/", "\\", "|", "=", "+", "<", ">",
+            "~", "^", "0", "1", "7", "9", "X", "Z", "§", "¥", "¿",
+            "†", "‡", "Ø", "¤", "∆", "◆", "▲",
+            "■", "●", "█", "▓", "▒", "░", "╳",
+            "╬", "¬",
+        };
+        constexpr int kGlyphCount = static_cast<int>(sizeof(kGlyphs) / sizeof(kGlyphs[0]));
+        for (int i = 0; i < 60; ++i) {
+            if (noise(tick * 1.3 + i * 2.7) < 0.32) continue;   // some blink out
+            const double gx = noise(tick + i * 1.9) * w;
+            const double gy = noise(tick * 1.1 + i * 2.3) * h;
+            const int gi = static_cast<int>(noise(i * 5.7 + tick * 0.5) * kGlyphCount) % kGlyphCount;
+            const std::uint32_t tint = (i % 4 == 0)   ? 0x00FFFFu
+                                       : (i % 4 == 1) ? 0xFF00FFu
+                                       : (i % 4 == 2) ? 0xFF1744u
+                                                      : 0xFFFFFFu;
+            TextStyle g;
+            g.size = unit * (0.028 + noise(tick + i * 4.1) * 0.085);
+            g.align = Align::Centre;
+            g.strokeWidth = 0.0;
+            // A third split into red/cyan ghosts for the broken-signal look.
+            if (noise(tick * 2.0 + i) > 0.6) {
+                g.fill = 0xFF1744u;
+                text(canvas, kGlyphs[gi], gx - 4.0, gy, g);
+                g.fill = 0x18FFFFu;
+                text(canvas, kGlyphs[gi], gx + 4.0, gy, g);
+            }
+            g.fill = tint;
+            text(canvas, kGlyphs[gi], gx, gy, g);
+        }
+        return;
+    }
+
+    // ACT TWO -- the real Windows stop screen, filling to 100% and holding there
+    // until the client really crashes on it; in a page it is the frame the
+    // abort leaves on screen, and on a second crash the last before the
+    // corrupted desktop boots. The Windows-10 blue, the face, the QR square and
+    // the stop code are drawn the way the genuine screen draws them, in the
+    // genuine FONT: the text here is handed to the canvas raw -- setFont +
+    // fillText -- rather than through the game's own stroked-outline text(), so
+    // the web build sets it in Segoe UI off the player's own machine, exactly
+    // as a true bluescreen would. The desktop build (tests, screenshots) has no
+    // Segoe UI and falls back to its one bundled face, which is all it needs.
+    const double pct = std::clamp(bsod / kBsodSeconds, 0.0, 1.0);
+
+    setFill(canvas, 0x0078D7u);
+    canvas.fillRect(0, 0, static_cast<float>(w), static_cast<float>(h));
+
+    // Integer pixel size for the CSS font shorthand. The desktop font parser
+    // reads the FIRST digit in the string as the size, so a weight is carried
+    // in the family name ("Segoe UI Light"), never as a leading number.
+    const auto px = [](double v) { return std::to_string(static_cast<int>(std::lround(v))); };
+    const std::string kLight = "px \"Segoe UI Light\", \"Segoe UI\", Tahoma, Geneva, sans-serif";
+    const std::string kReg = "px \"Segoe UI\", Tahoma, Geneva, sans-serif";
+    const auto winText = [&](const std::string& s, double x, double y, const std::string& font,
+                             std::uint32_t rgb) {
+        canvas.setFont(font);
+        setFill(canvas, rgb);
+        canvas.fillText(s, static_cast<float>(x), static_cast<float>(y));
+    };
+
+    // Where the stop screen's QR square sits, the player themselves looks back:
+    // their own flower -- its eyes and where they were looking, its antennae,
+    // third eye or whatever else it wears -- painted by the world's face code,
+    // not a picture of one, with the body in blue so the whole of it is black
+    // and blue. The body is the one the last snapshot left in the view, which
+    // the frozen client still holds; before any has landed, the plain face.
+    const auto drawPlayer = [&](double qx, double qy, double size) {
+        static const RemoteEntity kPlainFlower = [] {
+            RemoteEntity e;
+            e.kind = net::EntityKind::Player;
+            return e;
+        }();
+        const auto& entities = net_.view().entities();
+        const auto found = entities.find(net_.view().self().netId);
+        const RemoteEntity& flower = found != entities.end() ? found->second : kPlainFlower;
+
+        // The face's rim is radius 26.5 in its own art space; it is fitted to
+        // the square the QR code would fill.
+        constexpr double kRimArtRadius = 26.5;
+        const double scale = size * 0.5 / kRimArtRadius;
+        canvas.save();
+        canvas.translate(static_cast<float>(qx + size * 0.5), static_cast<float>(qy + size * 0.5));
+        canvas.scale(static_cast<float>(scale), static_cast<float>(scale));
+        renderer_.drawFlowerInColor(canvas, flower, kGlitchFlowerBlue, time);
+        canvas.restore();
+    };
+
+    // The words are Windows 10's own, line for line as it breaks them on a
+    // 1080p screen, and in its sizes: the face, then the paragraph and the
+    // percentage in the same light text, then the code square with the small
+    // support lines beside it. Everything is laid out from the top down in
+    // `unit`s, so the block keeps its proportions on any window shape.
+    canvas.save();
+    canvas.setTextAlign("left");
+    canvas.setTextBaseline("top");
+    const double leftX = w * 0.10;
+    const double faceTop = h * 0.15;
+
+    winText(":)", leftX, faceTop, px(unit * 0.15) + kLight, 0xFFFFFFu);
+
+    const std::string body = px(unit * 0.028) + kLight;
+    const double lh = unit * 0.040;
+    const double paraTop = faceTop + unit * 0.24;
+    winText("Your PC ran into a problem and needs to restart. We're just", leftX, paraTop, body,
+            0xFFFFFFu);
+    winText("collecting some error info, and then we'll restart for you.", leftX, paraTop + lh,
+            body, 0xFFFFFFu);
+
+    const double pctTop = paraTop + lh * 3.0;
+    winText(std::to_string(static_cast<int>(pct * 100.0)) + "% complete", leftX, pctTop, body,
+            0xFFFFFFu);
+
+    const double codeSize = unit * 0.10;
+    const double codeTop = pctTop + lh * 2.2;
+    drawPlayer(leftX, codeTop, codeSize);
+
+    const double sx = leftX + codeSize + unit * 0.022;
+    const std::string small = px(unit * 0.0155) + kReg;
+    const double slh = unit * 0.024;
+    winText("For more information about this issue and possible fixes, visit "
+            "https://www.windows.com/stopcode",
+            sx, codeTop, small, 0xFFFFFFu);
+    winText("If you call a support person, give them this info:", sx, codeTop + slh * 2.4, small,
+            0xFFFFFFu);
+    winText("Stop code: CRITICAL_PROCESS_DIED", sx, codeTop + slh * 3.4, small, 0xFFFFFFu);
+    canvas.restore();
+}
+
+bool App::glitchEndDue(double time) const {
+    return glitchActive() &&
+           time - glitchStartSeconds_ >=
+               kGlitchTearSeconds + kGlitchBsodSeconds + kGlitchCrashHoldSeconds;
+}
+
+void App::crashGlitched() {
+    // A real crash, but one that loses nothing a player would miss. The
+    // settings (florr.exe ever after) and the session token go to disk first.
+    // The socket is closed by hand so the server reaps the body through its
+    // ordinary disconnect path at once: a dead process's socket closes itself,
+    // but a page outlives its aborted runtime, and an open one would go on
+    // streaming the world into a client that will never read it again.
+    persist();
+    net_.disconnect();
+    if (crashHook_) crashHook_();
+#ifdef __EMSCRIPTEN__
+    // Stopped first, so nothing calls back into the aborted runtime, and the
+    // canvas keeps the stop screen this frame just presented.
+    emscripten_cancel_main_loop();
+    flix_glitch_abort();
+#endif
+    // The desktop: SIGABRT, and the OS's own "quit unexpectedly" report.
+    std::abort();
+}
+
+void App::recoverFromGlitch() {
+    glitchStartSeconds_ = -1.0;
+    glitchRecovers_ = false;
+    // The flower is taken off the server the way Leave takes it, so the title
+    // is what is waiting behind the desktop. Only from the world: a socket
+    // that dropped during the crash has already put the client on the screen
+    // that deals with that.
+    if (screen_ == Screen::Playing || screen_ == Screen::Dead) leaveToTitle();
+    // The documents are the account's own; the flower's name stands in on a
+    // build that never signed one in.
+    const std::string& account = net_.profile().username;
+    xpDesktop_.open(timeSeconds_, account.empty() ? playerName_ : account);
+}
+
+void App::drawXpDesktop(Canvas& canvas) {
+    if (!xpDesktop_.active()) return;
+    ui::XpPainters painters;
+    // Tiled, as XP tiles a small wallpaper: hel's ground, and over it the
+    // field of dead flowers lv2 lays across its own floor.
+    painters.wallpaper = [this](Canvas& c, double w, double h) {
+        setFill(c, 0x8F3838u);
+        c.fillRect(0, 0, static_cast<float>(w), static_cast<float>(h));
+        for (const SvgDocument* art : {titleBackground("hel"), stagedArt("dead_florr_tiled.svg")}) {
+            if (art == nullptr) continue;
+            const double tileW = art->width() > 0 ? art->width() : 256.0;
+            const double tileH = art->height() > 0 ? art->height() : 256.0;
+            for (double y = 0; y < h; y += tileH) {
+                for (double x = 0; x < w; x += tileW) {
+                    // A pixel oversized, so no seam shows between tiles.
+                    if (!drawCachedArt(c, *art, x, y, tileW + 1, tileH + 1)) {
+                        art->renderFitted(c, static_cast<float>(x), static_cast<float>(y),
+                                          static_cast<float>(tileW + 1),
+                                          static_cast<float>(tileH + 1),
+                                          static_cast<float>(timeSeconds_));
+                    }
+                }
+            }
+        }
+    };
+    painters.flower = [this](Canvas& c, double x, double y, double radius, bool dead) {
+        // The body's rim is radius 26.5 in its own art space.
+        constexpr double kRimArtRadius = 26.5;
+        c.save();
+        c.translate(static_cast<float>(x), static_cast<float>(y));
+        c.scale(static_cast<float>(radius / kRimArtRadius), static_cast<float>(radius / kRimArtRadius));
+        if (dead) {
+            // A corpse's face, crossed eyes and the frown, as the wallpaper's
+            // dead flowers wear it.
+            renderer_.drawDeadFlower(c, 0, 5.0, timeSeconds_);
+        } else {
+            RemoteEntity flower;
+            flower.kind = net::EntityKind::Player;
+            flower.radius = kRimArtRadius;
+            renderer_.drawFlowerBody(c, flower, timeSeconds_);
+        }
+        c.restore();
+    };
+    xpDesktop_.draw(canvas, timeSeconds_, painters);
+}
+
+void App::leaveXpDesktop() {
+    xpDesktop_.close();
+    // Before anything paints this frame, so the wipe holds up the desktop's
+    // last frame and opens onto the title behind it.
+    beginSceneWipe(false);
+    net_.addLocalAnnouncement("M28", "Something didn't go to plan");
 }
 
 void App::tallyRunLoot() {

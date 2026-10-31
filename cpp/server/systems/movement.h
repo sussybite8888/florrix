@@ -226,6 +226,20 @@ public:
     /// layer is the only thing that can send it.
     std::function<void(Entity, Realm, Vec2)> onTeleport;
 
+    /// Called when a flower walks into a `jumpscare` trap: the destination is
+    /// the pad the trap named, resolved to a realm and an arrival point. The
+    /// connection layer kills the flower for real and arms its respawn there,
+    /// for the same reason onTeleport is a callback -- the death, the session
+    /// state and the message it sends are none of movement's business. Null
+    /// leaves traps inert, which is what a map-less test wants.
+    std::function<void(Entity, Realm, Vec2)> onJumpscare;
+
+    /// Called when a flower walks into a `glitch` trap: the client is about to
+    /// crash. A callback for the same reason the others are -- the message that
+    /// crashes that player's client, and taking its body out of the world, are
+    /// the connection layer's to make, not movement's. Null leaves traps inert.
+    std::function<void(Entity)> onGlitch;
+
     /// Which flowers a pad may take at all. Null means every flower; the
     /// server answers false for its bots, whose controller only knows the
     /// overworld. A flower this refuses is neither pulled nor charged by a
