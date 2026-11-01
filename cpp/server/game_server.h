@@ -94,7 +94,11 @@ double monotonicMillis();
 inline constexpr int kMaxBots = 100;
 
 struct ServerConfig {
+    /// 0 asks for any free port, which boundPort() then reports.
     std::uint16_t port = 3000;
+    /// Listen on 127.0.0.1 only (net::Listener::loopbackOnly). The native
+    /// offline build sets it: its one client is in the same process.
+    bool loopbackOnly = false;
     std::string dataDir = "data";
     std::string databasePath = "inventory.json";
     std::uint64_t worldSeed = 0x5EED10;
@@ -142,6 +146,10 @@ public:
 
     /// Runs until stop() is called or a signal is caught.
     void run();
+
+    /// The port start() is listening on: config.port, or the free one picked
+    /// for a port of 0.
+    std::uint16_t boundPort() const { return listener_.port(); }
 
     /// One pass of that loop: service the network, and tick if a tick is due.
     /// Returns false once the server is finished. run() is a loop over this;

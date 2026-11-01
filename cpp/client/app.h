@@ -837,6 +837,9 @@ private:
     /// when a jumpscare death arrives (NetClient::jumpscareDeath) and cleared
     /// when it has run its course or the respawn lands.
     double jumpscareStartSeconds_ = -1.0;
+    /// Starts the scare now, picture and scream together, on one set of
+    /// timings (web::playJumpscareSound).
+    void beginJumpscare();
     void drawJumpscare(Canvas&, double time);
 
     // -- glitch crash --------------------------------------------------------
@@ -852,6 +855,9 @@ private:
     /// the stop screen gives way to the corrupted desktop (recoverFromGlitch).
     bool glitchRecovers_ = false;
     bool glitchActive() const { return glitchStartSeconds_ >= 0.0; }
+    /// Starts the crash now, picture and soundtrack together, on one set of
+    /// timings (web::playGlitchSound).
+    void beginGlitch();
     void drawGlitch(Canvas&, double time);
     /// True once the stop screen has held at 100% for its moment at `time`:
     /// the frame drawn then is the last of the sequence.
@@ -872,9 +878,9 @@ private:
     /// and every input; nothing underneath is drawn or updated.
     ui::XpDesktop xpDesktop_;
     void drawXpDesktop(Canvas&);
-    /// The last corruption.exe is gone: back to the title screen, out of the
-    /// desktop, with an announcement from "M28" that something didn't go to
-    /// plan.
+    /// The last corruption.exe is gone: the game exits normally, and the next
+    /// launch's title screen carries an announcement from "M28" that
+    /// something didn't go to plan (ClientSettings::glitchAnnouncement).
     void leaveXpDesktop();
 
     /// What the game calls itself on every title/menu screen: "florr.io" until

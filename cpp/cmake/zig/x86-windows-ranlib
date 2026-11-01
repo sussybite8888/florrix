@@ -1,0 +1,4 @@
+#!/bin/sh
+# CMake wants one program per tool; this one is zig ranlib for 32-bit Windows.
+# See ../windows-x86-zig.cmake.
+exec zig ranlib "$@"

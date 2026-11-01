@@ -5,8 +5,8 @@
 // florr.exe. The next one plays the same blue screen, but the "restart" it
 // promises lands here -- a Windows XP desktop the player is stuck in. A tray
 // balloon sets the quest: every corruption.exe on this computer has to be
-// found and deleted, and once the last one is gone the client goes back to the
-// title screen (App::leaveXpDesktop).
+// found and deleted, and once the last one is gone the game exits, the ordinary
+// way, back to the player's own computer (App::leaveXpDesktop).
 //
 // It is drawn the way XP's Luna theme is drawn -- the taskbar and its green
 // Start button, the rounded title bars, Explorer's task pane, the Start menu,
@@ -29,6 +29,7 @@
 #include "canvas.h"
 #include "window.h"
 
+#include "client/web/audio.h"
 #include "shared/core/types.h"
 
 namespace flix::ui {
@@ -173,7 +174,7 @@ public:
     bool active() const { return active_; }
 
     /// True once every corruption.exe is gone and the goodbye balloon has had
-    /// its moment: the App takes the desktop down and goes to the title.
+    /// its moment: the App exits the game on it.
     bool finished(double now) const;
 
     /// One frame of the window's input, and the hand over a link.
@@ -182,6 +183,12 @@ public:
     /// units.
     void update(const XpInput& in, double width, double height, double now);
     void draw(Canvas&, double now, const XpPainters&);
+
+    /// What the desktop has made a noise about since this was last called,
+    /// oldest first -- its startup, each box and balloon as it comes up, every
+    /// folder opened, everything thrown away -- for the App to play
+    /// (web::playSound). Taking them empties the list.
+    std::vector<web::Sound> takeSounds();
 
     const XpFileSystem& files() const { return fs_; }
     /// The front window's title -- a message box's caption -- or "" with none.
@@ -284,8 +291,13 @@ private:
     void openItem(int node, Win* from);
     void openExplorer(int folder);
     void openViewer(Kind kind, int file);
+    /// A message box, sounding as its glyph says: an error, a notice, or a
+    /// question.
     void message(const std::string& caption, const std::string& text, Glyph glyph,
                  bool yesNo = false, int confirm = -1);
+    /// corruption.exe's application error, which is an error box with a
+    /// sound of its own.
+    void crashMessage(const std::string& name);
     void restrictionMessage();
     void askDelete(int node);
     void askEmptyRecycleBin();
@@ -295,7 +307,9 @@ private:
     /// took a corruption.exe with it.
     void afterDelete(int corruptionBefore);
     void navigate(Win& w, int folder, bool record = true);
-    void showBalloon(const std::string& title, const std::string& body, double lasts);
+    void showBalloon(const std::string& title, const std::string& body, double lasts,
+                     web::Sound sound = web::Sound::Balloon);
+    void cue(web::Sound sound) { sounds_.push_back(sound); }
     void showQuestBalloon();
     void startItem(int action);
     bool doubleClick(int window, int item, double now);
@@ -338,6 +352,10 @@ private:
     /// Where the balloon was last drawn, for the next frame's clicks.
     Rect balloonBox_;
     bool questShown_ = false;
+    /// Whether the startup sound has played: once, as the desktop fades in.
+    bool startupSounded_ = false;
+    /// What takeSounds() hands over next.
+    std::vector<web::Sound> sounds_;
     ContextMenu menu_;
     Press press_;
     int dragging_ = -1;

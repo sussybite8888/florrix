@@ -38,6 +38,7 @@
 #endif
 #include "client/ui/text_input.h"
 #include "client/ui/touch_scroll.h"
+#include "client/web/audio.h"
 #include "client/web/boot.h"
 #include "client/web/reload.h"
 #include "shared/game/config.h"
@@ -132,13 +133,43 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     // first frame, because the camera's viewport and every panel's layout are
     // read straight off window_.width()/height().
     window_.setDesignSize(kDesignWidth, kDesignHeight);
+#ifndef __EMSCRIPTEN__
+    // The desktop build opens fullscreen, as a game does, with no click asked
+    // for. Not on a scripted run: a screenshot wants its fixed-size frame, and
+    // the --frames benchmark the window it measures. A page cannot do this --
+    // a browser grants fullscreen only off the player's own key or click -- so
+    // the web builds ask for it when a glitch crash begins instead.
+    if (showWindow && config.screenshotAfterFrames <= 0) window_.requestFullscreen();
+#endif
     window_.setInputGuard(config.inputGuard);
     coarsePointer_ = window_.coarsePointer();
+    // Now, not when the first sound is due: a page is only allowed to make a
+    // noise once the player has pressed something, so the audio has to be
+    // listening for that press from the start (client/web/audio.h).
+    web::installAudio();
 
     renderer_.setContent(&content());
     // So a ring laid out around a moon is smoothed around the moon.
     net_.view().setContent(&content());
     renderer_.setSprites(&sprites_);
+#ifndef __EMSCRIPTEN__
+    // The window's icon, drawn by the renderer from the world's own pictures:
+    // the player torn down the middle into the glitch flower
+    // (WorldRenderer::drawAppIcon). The Windows .exe carries the same picture,
+    // compiled in at build time (tools/app_icon.cpp). A Mac's Dock shows it on
+    // Apple's icon grid, as the Mac app's .icns does, so the Dock's icon does
+    // not jump in size when this one replaces the app's.
+    {
+        constexpr int kIconSize = 256;
+        Canvas icon = Canvas::createVirtual(kIconSize, kIconSize);
+#ifdef __APPLE__
+        renderer_.drawMacAppIcon(icon, kIconSize);
+#else
+        renderer_.drawAppIcon(icon, kIconSize);
+#endif
+        window_.setIcon(icon.getImageData(0, 0, kIconSize, kIconSize), kIconSize, kIconSize);
+    }
+#endif
     // The published skins, for the flowers wearing them. NetClient owns the
     // list and replaces it on every SkinCatalog/SkinPublished/SkinDeleted, so
     // the renderer holds the container and looks a wearer up per frame rather
@@ -457,9 +488,9 @@ void App::pollNetwork() {
         deathCardVisible_ = true;
         screen_ = Screen::Dead;
         // A jumpscare trap slams the corrupted flower over the screen the
-        // instant it kills; the card slides in underneath and shows through as
-        // it fades.
-        if (net_.jumpscareDeath()) jumpscareStartSeconds_ = timeSeconds_;
+        // instant it kills, screaming; the card slides in underneath and shows
+        // through as it fades.
+        if (net_.jumpscareDeath()) beginJumpscare();
     }
     // A yggdrasil put the body back on its feet. Read as a one-shot flag
     // rather than as `!net_.dead()`, because --dead raises the card on a
@@ -490,14 +521,7 @@ void App::pollNetwork() {
     // crash the player answers by force-reloading never runs the ordinary save.
     // An install that is florr.exe already has crashed before, and this time
     // it restarts into the corrupted desktop instead of going down.
-    if (net_.takeGlitch() && !glitchActive()) {
-        glitchStartSeconds_ = timeSeconds_;
-        glitchRecovers_ = menus_.settings().glitched;
-        if (!menus_.settings().glitched) {
-            menus_.settings().glitched = true;
-            menus_.settings().save(settingsPath());
-        }
-    }
+    if (net_.takeGlitch() && !glitchActive()) beginGlitch();
 }
 
 std::string App::gameTitle() const {
@@ -722,6 +746,14 @@ void App::frame(double dt) {
         else easeToward(lowHealthVignette_, dark, kLowHealthVignetteEaseSeconds);
     }
 
+    // The last run ended on the corrupted desktop's hunt and exited there;
+    // M28's word on it comes up once this one reaches the title screen.
+    if (menus_.settings().glitchAnnouncement && screen_ == Screen::Lobby) {
+        menus_.settings().glitchAnnouncement = false;
+        menus_.settings().save(settingsPath());
+        net_.addLocalAnnouncement("M28", "Something didn't go to plan");
+    }
+
     // While a glitch trap is crashing the client there is nothing to drive:
     // no input, no buttons, no screen changes. The sequence runs on its own
     // clock in drawGlitch(), and ends in a real crash or, on an install that
@@ -730,6 +762,7 @@ void App::frame(double dt) {
     // screens behind it hears any of it.
     if (xpDesktop_.active()) {
         xpDesktop_.update(window_, timeSeconds_);
+        for (const web::Sound sound : xpDesktop_.takeSounds()) web::playSound(sound);
         if (xpDesktop_.finished(timeSeconds_)) leaveXpDesktop();
     } else if (!glitchActive()) {
         switch (screen_) {

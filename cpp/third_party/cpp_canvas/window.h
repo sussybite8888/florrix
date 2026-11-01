@@ -381,17 +381,23 @@ public:
     // flickering between the two.
     void setCursorShape(CursorShape shape);
 
-    /// Makes the window fill the screen. On the web the Fullscreen API only
-    /// grants this from inside a user gesture, so the request is deferred to the
-    /// next browser event the player generates -- a call made from the frame
-    /// loop (where this one is) is not itself in a gesture. On the desktop it is
-    /// an immediate SDL borderless (FULLSCREEN_DESKTOP) switch, which keeps the
-    /// desktop resolution and does not change videomode. Either way the backing
-    /// store is re-read from the window/canvas size every pump, so the frame
-    /// after the switch simply draws at the screen's resolution. Only ever
-    /// called from the gesture that starts a game, so tests and screenshots,
-    /// which never reach that path, keep their fixed-size window.
+    /// Makes the window fill the screen, from anywhere, with no click asked
+    /// for. On the desktop it is an immediate SDL borderless
+    /// (FULLSCREEN_DESKTOP) switch, which keeps the desktop resolution and does
+    /// not change videomode. On the web the Fullscreen API wants the player's
+    /// transient activation -- a key or click in the last few seconds -- and
+    /// the request goes through at once while the page still has one, which a
+    /// player mid-game nearly always does; without one it waits for their next
+    /// key or click. Either way the backing store is re-read from the
+    /// window/canvas size every pump, so the frame after the switch simply
+    /// draws at the screen's resolution.
     void requestFullscreen();
+
+    /// Sets the window's icon -- its title bar's and the taskbar's on Windows,
+    /// the Dock's on a Mac -- from `width` by `height` RGBA pixels with
+    /// straight alpha, as getImageData() returns them. Nothing on the web,
+    /// where the page's favicon is the icon.
+    void setIcon(const std::vector<std::uint8_t>& rgba, int width, int height);
 
 private:
     struct Impl;

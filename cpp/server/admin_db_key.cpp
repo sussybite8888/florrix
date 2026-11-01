@@ -9,8 +9,10 @@
 
 #include "server/crypto.h"
 
-#ifdef __EMSCRIPTEN__
+#if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
+#elif defined(_WIN32)
+#include <io.h>
 #else
 #include <arpa/inet.h>
 #include <ifaddrs.h>
@@ -126,7 +128,11 @@ bool createKeyFile(const std::string& path, const std::string& key, std::string&
     }
     const std::string text = key + "\n";
     const bool written = ::write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size());
+#ifdef _WIN32
+    if (written) ::_commit(fd);
+#else
     if (written) ::fsync(fd);
+#endif
     const bool closed = ::close(fd) == 0;
     if (!written || !closed) {
         std::remove(path.c_str());
@@ -145,10 +151,15 @@ bool isPrivateIPv4(const std::string& address) {
 }
 
 std::string privateAddress() {
-#ifdef __EMSCRIPTEN__
+#if defined(__EMSCRIPTEN__)
     char answer[64] = {0};
     flix_admin_db_address(answer, static_cast<int>(sizeof answer));
     return answer;
+#elif defined(_WIN32)
+    // No getifaddrs. The one Windows build that runs a server is the native
+    // offline one, which hands the server a fixed key (ServerConfig::
+    // fixedAdminDbKey) and never derives one from an address.
+    return {};
 #else
     ifaddrs* list = nullptr;
     if (getifaddrs(&list) != 0) return {};

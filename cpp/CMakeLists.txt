@@ -56,9 +56,62 @@ add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 # FLIX_WEB_BUILD is what the client compiles differently: the chat tags that
 # need a document to mean anything are honoured only where there is one. See
 # shared/game/markup.h.
+#
+# The native builds draw and read input through SDL2: from pkg-config on a Mac
+# or Linux, and on Windows -- which is only ever cross-compiled, from
+# cmake/windows-x86-zig.cmake -- from SDL's own MinGW development package,
+# linked statically so the program is one .exe with no SDL2.dll beside it.
+# FLIX_SDL2_DIR is that package's i686-w64-mingw32 directory; see
+# scripts/build-windows.js, which fetches it.
 if(NOT EMSCRIPTEN)
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+  add_library(flix_sdl2 INTERFACE)
+  if(WIN32)
+    set(FLIX_SDL2_DIR "" CACHE PATH "SDL2 MinGW development package (its i686-w64-mingw32 directory)")
+    if(NOT EXISTS "${FLIX_SDL2_DIR}/include/SDL2/SDL.h" OR NOT EXISTS "${FLIX_SDL2_DIR}/lib/libSDL2.a")
+      message(FATAL_ERROR "FLIX_SDL2_DIR must name SDL2's MinGW package for this target, not '${FLIX_SDL2_DIR}'")
+    endif()
+    target_include_directories(flix_sdl2 SYSTEM INTERFACE ${FLIX_SDL2_DIR}/include/SDL2)
+    # The static library, then the system libraries it calls into.
+    target_link_libraries(flix_sdl2 INTERFACE
+      ${FLIX_SDL2_DIR}/lib/libSDL2.a
+      setupapi winmm imm32 version ole32 oleaut32 gdi32 user32 shell32 uuid advapi32)
+    # main() is the program's own: SDL's would rename it SDL_main and expect
+    # its own WinMain to call it.
+    target_compile_definitions(flix_sdl2 INTERFACE SDL_MAIN_HANDLED)
+  else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+    # FLIX_STATIC_SDL2 links SDL's static library into the programs instead,
+    # with the system frameworks it needs, so a packaged build has no
+    # libSDL2.dylib to carry beside it (scripts/build-native.js turns it on).
+    # The library is named by its full path: -lSDL2 would take the dylib.
+    option(FLIX_STATIC_SDL2 "Link SDL2 statically (packaged native builds)" OFF)
+    if(FLIX_STATIC_SDL2)
+      if(NOT EXISTS "${SDL2_LIBDIR}/libSDL2.a")
+        message(FATAL_ERROR "FLIX_STATIC_SDL2: no libSDL2.a in ${SDL2_LIBDIR}")
+      endif()
+      set(FLIX_SDL2_SYSTEM_LIBS)
+      foreach(flag IN LISTS SDL2_STATIC_LDFLAGS)
+        if(NOT flag MATCHES "^-L" AND NOT flag STREQUAL "-lSDL2")
+          list(APPEND FLIX_SDL2_SYSTEM_LIBS ${flag})
+        endif()
+      endforeach()
+      target_include_directories(flix_sdl2 SYSTEM INTERFACE ${SDL2_INCLUDE_DIRS})
+      target_compile_options(flix_sdl2 INTERFACE ${SDL2_CFLAGS_OTHER})
+      target_link_libraries(flix_sdl2 INTERFACE ${SDL2_LIBDIR}/libSDL2.a ${FLIX_SDL2_SYSTEM_LIBS})
+    else()
+      target_link_libraries(flix_sdl2 INTERFACE PkgConfig::SDL2)
+    endif()
+  endif()
+endif()
+
+# --- what the Windows build is -----------------------------------------------
+# 32-bit x86, so the one .exe runs on 32- and 64-bit Windows alike, and written
+# against Windows 7's API, so nothing newer is called by accident. (The C++
+# runtime's threads need Vista at the least; Windows 7 is the floor promised.)
+# windows.h's min and max macros would break every std::min in the tree.
+if(WIN32)
+  add_compile_definitions(_WIN32_WINNT=0x0601 WINVER=0x0601 NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 # --- what the web client draws with ------------------------------------------
@@ -149,6 +202,7 @@ add_library(cpp_canvas STATIC
   third_party/cpp_canvas/path2d.cpp
   third_party/cpp_canvas/svg.cpp
   third_party/cpp_canvas/font.cpp
+  third_party/cpp_canvas/file_source.cpp
   third_party/cpp_canvas/window.cpp
   third_party/cpp_canvas/touch_gesture.cpp
 )
@@ -190,7 +244,7 @@ endif()
 # Browser rendering and input use Canvas2D and DOM APIs directly, so the web
 # artifact does not link Emscripten's SDL/WebGL compatibility layer at all.
 if(NOT EMSCRIPTEN)
-  target_link_libraries(cpp_canvas PUBLIC PkgConfig::SDL2)
+  target_link_libraries(cpp_canvas PUBLIC flix_sdl2)
   # The software rasterizer splits a large fill across scanline bands on a
   # small thread pool. Only the native build has that code at all -- the web
   # build draws through the browser's own context -- so the dependency is
@@ -202,6 +256,7 @@ endif()
 # --- shared: engine core linked by both binaries -----------------------------
 add_library(flix_shared STATIC
   shared/core/world.cpp
+  shared/core/embedded_files.cpp
   shared/core/json.cpp
   shared/core/process_stats.cpp
   shared/net/transport.cpp
@@ -221,6 +276,10 @@ add_library(flix_shared STATIC
   shared/game/markup.cpp
 )
 target_include_directories(flix_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# The transport's sockets are Winsock's there.
+if(WIN32)
+  target_link_libraries(flix_shared PUBLIC ws2_32)
+endif()
 
 # --- server ------------------------------------------------------------------
 add_library(flix_server STATIC
@@ -253,8 +312,12 @@ add_library(flix_server STATIC
 )
 target_link_libraries(flix_server PUBLIC flix_shared)
 
-add_executable(flowrix_server server/main.cpp)
-target_link_libraries(flowrix_server PRIVATE flix_server)
+# Not for Windows: the dedicated server is a Linux/Mac (and Node) program, and
+# the one Windows build that runs a server is the offline one below.
+if(NOT WIN32)
+  add_executable(flowrix_server server/main.cpp)
+  target_link_libraries(flowrix_server PRIVATE flix_server)
+endif()
 
 # --- client ------------------------------------------------------------------
 add_library(flix_client STATIC
@@ -313,6 +376,7 @@ add_library(flix_client STATIC
   client/render/skin_render.cpp
   client/render/sprites.cpp
   client/render/world_renderer.cpp
+  client/web/audio.cpp
   client/web/boot.cpp
   client/web/reload.cpp
 )
@@ -320,6 +384,27 @@ target_link_libraries(flix_client PUBLIC flix_shared cpp_canvas)
 
 add_executable(flowrix_client client/main.cpp)
 target_link_libraries(flowrix_client PRIVATE flix_client)
+
+# The native offline build: server and client in one program, the desktop's
+# counterpart of the offline page (that one is the EMSCRIPTEN flowrix_offline
+# below; a tree is one or the other, never both). See offline/native_main.cpp.
+if(NOT EMSCRIPTEN)
+  add_executable(flowrix_offline offline/native_main.cpp)
+  target_link_libraries(flowrix_offline PRIVATE flix_server flix_client)
+endif()
+
+# A game, not a console program: no terminal window opens beside it. Spelled
+# as the linker's flag, which Zig's driver honours where it ignores GCC's
+# -mwindows (what WIN32_EXECUTABLE would add). A release is stripped, too: the
+# symbols are most of the size of a static .exe.
+if(WIN32)
+  target_link_options(flowrix_client PRIVATE -Wl,--subsystem,windows)
+  target_link_options(flowrix_offline PRIVATE -Wl,--subsystem,windows)
+  if(FLIX_BUILD STREQUAL "release")
+    target_link_options(flowrix_client PRIVATE -s)
+    target_link_options(flowrix_offline PRIVATE -s)
+  endif()
+endif()
 
 # Browser-only: the settings and session files are the client's whole writable
 # state, and MEMFS does not survive a reload. See client/web/persist.cpp.
@@ -374,9 +459,23 @@ flix_stage_font(Ubuntu-Bold.ttf
 # which has nowhere to fetch a face from and registers this one with the
 # document, and in a Skia client (FLIX_RENDERER=skia), which sets text itself.
 # See the link options under EMSCRIPTEN below.
-add_executable(font_table tools/font_table.cpp)
-target_link_libraries(font_table PRIVATE cpp_canvas)
-target_include_directories(font_table PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+#
+# A cross-compiled native build (Windows) cannot run a tool it compiled, and
+# has no emulator to run it under. It takes the host's own build of the tool
+# instead, as FLIX_FONT_TABLE_TOOL: the table depends on the font file alone,
+# so any build of the tool writes the same one.
+set(FLIX_FONT_TABLE_TOOL "" CACHE FILEPATH "A host build of tools/font_table.cpp, for cross builds")
+if(CMAKE_CROSSCOMPILING AND NOT EMSCRIPTEN)
+  if(NOT EXISTS "${FLIX_FONT_TABLE_TOOL}")
+    message(FATAL_ERROR "A cross build needs FLIX_FONT_TABLE_TOOL: a host build of tools/font_table.cpp")
+  endif()
+  set(FLIX_FONT_TABLE_COMMAND ${FLIX_FONT_TABLE_TOOL})
+else()
+  add_executable(font_table tools/font_table.cpp)
+  target_link_libraries(font_table PRIVATE cpp_canvas)
+  target_include_directories(font_table PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  set(FLIX_FONT_TABLE_COMMAND font_table)
+endif()
 if(EMSCRIPTEN)
   if(NOT CMAKE_CROSSCOMPILING_EMULATOR)
     message(FATAL_ERROR "The emscripten toolchain found no Node to run tools/font_table.cpp")
@@ -390,8 +489,8 @@ file(MAKE_DIRECTORY ${FLIX_GENERATED_DIR})
 set(FLIX_FACE_TABLE ${FLIX_GENERATED_DIR}/face_metrics_table.inc)
 add_custom_command(
   OUTPUT ${FLIX_FACE_TABLE}
-  COMMAND font_table ${FLIX_DATA_DIR}/Ubuntu-Bold.ttf ${FLIX_FACE_TABLE}
-  DEPENDS font_table ${FLIX_DATA_DIR}/Ubuntu-Bold.ttf
+  COMMAND ${FLIX_FONT_TABLE_COMMAND} ${FLIX_DATA_DIR}/Ubuntu-Bold.ttf ${FLIX_FACE_TABLE}
+  DEPENDS ${FLIX_FONT_TABLE_COMMAND} ${FLIX_DATA_DIR}/Ubuntu-Bold.ttf
   COMMENT "Tabulating the font's metrics"
   VERBATIM)
 target_sources(flix_client PRIVATE ${FLIX_FACE_TABLE})
@@ -549,7 +648,68 @@ add_custom_command(
 
 add_custom_target(flix_data ALL DEPENDS ${FLIX_DATA_STAGED})
 add_dependencies(flowrix_client flix_data)
-add_dependencies(flowrix_server flix_data)
+if(TARGET flowrix_server)
+  add_dependencies(flowrix_server flix_data)
+endif()
+if(NOT EMSCRIPTEN)
+  add_dependencies(flowrix_offline flix_data)
+
+  # The native offline build carries the whole content directory inside the
+  # executable, so it is one file that runs from anywhere: every staged file
+  # (the manifest's list, the font included) written into a C++ source as byte
+  # arrays, which offline/native_main.cpp mounts over the data directory
+  # (shared/core/embedded_files.h). Rewritten whenever the content changes.
+  set(FLIX_EMBEDDED_CONTENT ${FLIX_GENERATED_DIR}/embedded_content.cpp)
+  add_custom_command(
+    OUTPUT ${FLIX_EMBEDDED_CONTENT}
+    COMMAND ${CMAKE_COMMAND}
+            -DFLIX_DATA_DIR=${FLIX_DATA_DIR}
+            -DFLIX_DATA_MANIFEST=${FLIX_DATA_MANIFEST}
+            -DFLIX_EMBEDDED_OUTPUT=${FLIX_EMBEDDED_CONTENT}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_content.cmake
+    DEPENDS ${FLIX_DATA_STAGED} ${FLIX_DATA_DIR}/Ubuntu-Bold.ttf ${FLIX_DATA_MANIFEST}
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_content.cmake
+    COMMENT "Embedding the game content in the offline build")
+  target_sources(flowrix_offline PRIVATE ${FLIX_EMBEDDED_CONTENT})
+endif()
+
+# The Windows build's .exe icon, the one Explorer shows before the program has
+# run (the window's own is drawn at run time; see App::start). The same picture
+# (WorldRenderer::drawAppIcon, drawn from the staged content), written as an
+# .ico by tools/app_icon.cpp -- the host's build of it, for font_table's reason
+# -- and handed to the link as a resource script, which Zig compiles into the
+# .exe's resources.
+if(WIN32)
+  set(FLIX_APP_ICON_TOOL "" CACHE FILEPATH "A host build of tools/app_icon.cpp, for the Windows icon")
+  if(NOT EXISTS "${FLIX_APP_ICON_TOOL}")
+    message(FATAL_ERROR "The Windows build needs FLIX_APP_ICON_TOOL: a host build of tools/app_icon.cpp")
+  endif()
+  set(FLIX_APP_ICON ${FLIX_GENERATED_DIR}/florr.ico)
+  add_custom_command(
+    OUTPUT ${FLIX_APP_ICON}
+    COMMAND ${FLIX_APP_ICON_TOOL} ${FLIX_DATA_DIR} ${FLIX_APP_ICON}
+    DEPENDS ${FLIX_APP_ICON_TOOL} ${FLIX_DATA_STAGED}
+    COMMENT "Drawing the icon"
+    VERBATIM)
+  add_custom_target(flix_app_icon DEPENDS ${FLIX_APP_ICON})
+  # Rewritten only when it changes, so a re-configure does not relink. The
+  # icon is named bare, beside the script: Zig's resource compiler looks for a
+  # file relative to the script, and reads an absolute POSIX path as no file.
+  set(FLIX_APP_RC ${FLIX_GENERATED_DIR}/florr.rc)
+  set(FLIX_APP_RC_TEXT "1 ICON \"florr.ico\"\n")
+  set(FLIX_APP_RC_EXISTING "")
+  if(EXISTS ${FLIX_APP_RC})
+    file(READ ${FLIX_APP_RC} FLIX_APP_RC_EXISTING)
+  endif()
+  if(NOT FLIX_APP_RC_EXISTING STREQUAL FLIX_APP_RC_TEXT)
+    file(WRITE ${FLIX_APP_RC} "${FLIX_APP_RC_TEXT}")
+  endif()
+  foreach(program flowrix_client flowrix_offline)
+    add_dependencies(${program} flix_app_icon)
+    target_link_options(${program} PRIVATE ${FLIX_APP_RC})
+    set_property(TARGET ${program} APPEND PROPERTY LINK_DEPENDS ${FLIX_APP_ICON} ${FLIX_APP_RC})
+  endforeach()
+endif()
 
 # --- the web build's link step -----------------------------------------------
 if(EMSCRIPTEN)
@@ -864,10 +1024,12 @@ if(EMSCRIPTEN)
 endif()
 
 # --- tools -------------------------------------------------------------------
-# Native only. svg_smoke and raster_parity write a PPM from the headless
-# rasterizer; bot_probe and projectile_bench boot the real server;
-# mob_render_bench and hitbox_fit draw through the client's own renderer.
-if(NOT EMSCRIPTEN)
+# Native only, and not in the Windows cross build, which ships the two
+# programs above and nothing it could not run here. svg_smoke and
+# raster_parity write a PPM from the headless rasterizer; bot_probe and
+# projectile_bench boot the real server; mob_render_bench and hitbox_fit draw
+# through the client's own renderer.
+if(NOT EMSCRIPTEN AND NOT WIN32)
 # Every mob and petal artwork in the staged mobs.json and petals.json, drawn
 # through the SVG compiler onto one contact sheet. The staged directory rides
 # in as FLIX_TEST_DATA_DIR, as it does for bot_probe and hitbox_fit, and the
@@ -877,6 +1039,13 @@ add_executable(svg_smoke tools/svg_smoke.cpp)
 target_link_libraries(svg_smoke PRIVATE flix_shared cpp_canvas)
 target_compile_definitions(svg_smoke PRIVATE FLIX_TEST_DATA_DIR="${FLIX_DATA_DIR}")
 add_dependencies(svg_smoke flix_data)
+
+# The program's icon as a Windows .ico or a Mac .iconset, and a PPM of it to
+# look at. The Windows cross build runs the host's build of this one
+# (FLIX_APP_ICON_TOOL above); the Mac app's icon is packed from its .iconset
+# (scripts/build-native.js).
+add_executable(app_icon tools/app_icon.cpp)
+target_link_libraries(app_icon PRIVATE flix_client)
 
 # The rasterizer's fingerprint. Build it either side of a canvas.cpp change and
 # diff the two PPMs: the coverage maths is not what any of those changes are

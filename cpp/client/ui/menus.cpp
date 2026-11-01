@@ -701,6 +701,7 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "biome") spawnChoice = (value == "-" ? std::string() : value);
         else if (key == "prestige") prestige = number != 0;
         else if (key == "glitched") glitched = number != 0;
+        else if (key == "glitchAnnounce") glitchAnnouncement = number != 0;
         else if (key == "mouseControls") useMouseControls = number != 0;
         else if (key == "classicLoadout") classicLoadoutBar = number != 0;
         // The key being on disk at all is the choice: an absent one leaves the
@@ -754,6 +755,7 @@ bool ClientSettings::save(const std::string& path) const {
          << "spawn " << (spawnChoice.empty() ? std::string("-") : spawnChoice) << '\n'
          << "prestige " << (prestige ? 1 : 0) << '\n'
          << "glitched " << (glitched ? 1 : 0) << '\n'
+         << "glitchAnnounce " << (glitchAnnouncement ? 1 : 0) << '\n'
          << "mouseControls " << (useMouseControls ? 1 : 0) << '\n'
          << "classicLoadout " << (classicLoadoutBar ? 1 : 0) << '\n'
          << "tutorialDone " << (tutorialCompleted ? 1 : 0) << '\n'

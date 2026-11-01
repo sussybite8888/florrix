@@ -40,6 +40,10 @@ cpp/build-web/
 cpp/build-web-skia/
 cpp/build-rel/
 cpp/build-admin/
+# The native desktop builds (scripts/build-native.js): the Windows cross build
+# with its fetched SDL2 and host tool tree, and the Mac release tree.
+cpp/build-win32/
+cpp/build-mac/
 skia-wasm/
 
 # TLS material the wasm server looks for in its working directory: cert.crt and

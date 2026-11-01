@@ -249,7 +249,11 @@ std::string clockWaitLabel(double leftMillis) {
 std::string localeTimestamp(std::int64_t millis) {
     const std::time_t seconds = static_cast<std::time_t>(millis / 1000);
     std::tm parts{};
+#ifdef _WIN32
+    localtime_s(&parts, &seconds);
+#else
     localtime_r(&seconds, &parts);
+#endif
     char buffer[64];
     if (std::strftime(buffer, sizeof buffer, "%m/%d/%Y, %I:%M:%S %p", &parts) == 0) return {};
     return buffer;

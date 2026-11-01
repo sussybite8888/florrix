@@ -2,6 +2,7 @@
 
 #include "client/ui/xp_desktop.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -10,6 +11,7 @@ using flix::ui::XpDesktop;
 using flix::ui::XpFileSystem;
 using flix::ui::XpInput;
 using flix::ui::XpOpen;
+using flix::web::Sound;
 
 // The corrupted desktop a second glitch crash restarts into.
 //
@@ -242,4 +244,79 @@ TEST(the_hunt_plays_through_to_the_end_with_the_mouse_and_keyboard) {
     CHECK(!desktop.finished(player.now));
     player.idle(4.5);
     CHECK(desktop.finished(player.now));
+}
+
+TEST(the_hunt_is_heard_from_the_startup_to_the_last_corruption_file) {
+    // The desktop says what it makes a noise about and the App plays it
+    // (web::playSound), so which sound, and when, is the desktop's to get right.
+    XpDesktop desktop;
+    desktop.open(0.0, "tester");
+    Player player{desktop};
+    const XpFileSystem& fs = desktop.files();
+    const auto took = [&](std::vector<Sound> expected) { return desktop.takeSounds() == expected; };
+    const auto heard = [&](Sound sound) {
+        const std::vector<Sound> taken = desktop.takeSounds();
+        return std::find(taken.begin(), taken.end(), sound) != taken.end();
+    };
+
+    // Silent through the restart's black screen, then the startup as the
+    // desktop fades in, and the quest's balloon popping up after it.
+    player.idle(0.5);
+    CHECK(took({}));
+    player.idle(2.5);
+    CHECK(took({Sound::DesktopStartup, Sound::Balloon}));
+    player.idle(1.0);
+    CHECK(took({}));
+
+    // corruption.exe's crash box is not the ordinary error.
+    const int onDesktop = fs.find("corruption.exe");
+    player.doubleClick(desktop.itemCentre(onDesktop));
+    CHECK(took({Sound::CorruptionError}));
+    player.key(&XpInput::escape);
+    CHECK(took({}));
+
+    // Asked first; then thrown away, dying, and the balloon says how many are
+    // left.
+    player.click(desktop.itemCentre(onDesktop));
+    player.key(&XpInput::deleteKey);
+    CHECK(took({Sound::Question}));
+    player.key(&XpInput::enter);
+    CHECK(took({Sound::Purge, Sound::Balloon}));
+
+    // What cannot go is an error.
+    player.click(desktop.itemCentre(fs.find("READ ME.txt")));
+    player.key(&XpInput::deleteKey);
+    CHECK(took({Sound::Error}));
+    player.key(&XpInput::enter);
+
+    // Every folder opened clicks, whether in a new window or the same one.
+    player.doubleClick(desktop.itemCentre(fs.myComputer()));
+    CHECK(took({Sound::Navigate}));
+    for (const char* folder : {"My Computer/Local Disk (C:)", "My Computer/Local Disk (C:)/WINDOWS",
+                               "My Computer/Local Disk (C:)/WINDOWS/system32"}) {
+        player.doubleClick(desktop.itemCentre(fs.find(folder)));
+        CHECK(took({Sound::Navigate}));
+    }
+    player.deleteItem(fs.find("My Computer/Local Disk (C:)/WINDOWS/system32/corruption.exe"));
+    CHECK(took({Sound::Question, Sound::Purge, Sound::Balloon}));
+
+    player.key(&XpInput::backspace);
+    player.key(&XpInput::backspace);
+    player.doubleClick(desktop.itemCentre(fs.find("My Computer/Local Disk (C:)/Program Files")));
+    player.doubleClick(desktop.itemCentre(fs.find("My Computer/Local Disk (C:)/Program Files/florr")));
+    player.deleteItem(fs.find("My Computer/Local Disk (C:)/Program Files/florr/corruption.exe"));
+    CHECK(heard(Sound::Purge));
+    player.doubleClick(desktop.itemCentre(fs.recycleBin()));
+    player.deleteItem(fs.find("Recycle Bin/corruption.exe"));
+    CHECK(heard(Sound::Purge));
+    player.doubleClick(desktop.itemCentre(fs.find("My Documents")));
+    player.doubleClick(desktop.itemCentre(fs.myPictures()));
+    CHECK(took({Sound::Navigate, Sound::Navigate}));
+    CHECK_EQ(fs.corruptionLeft(), 1);
+
+    // The last one: thrown away, and the all-clear in place of the balloon's
+    // pop.
+    player.deleteItem(fs.find("My Documents/My Pictures/corruption.exe"));
+    CHECK_EQ(fs.corruptionLeft(), 0);
+    CHECK(took({Sound::Question, Sound::Purge, Sound::AllClear}));
 }

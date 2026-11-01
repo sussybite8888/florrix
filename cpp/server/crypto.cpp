@@ -1,7 +1,14 @@
+// rand_s, Windows' door to the system random generator, is declared only when
+// this is set before the C library's headers are first read.
+#ifdef _WIN32
+#define _CRT_RAND_S
+#endif
+
 #include "server/crypto.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <string>
@@ -481,11 +488,22 @@ void chachaBlock(const std::uint8_t key[32], std::uint64_t counter, std::uint8_t
 }
 
 bool readUrandom(std::uint8_t* out, std::size_t length) {
+#ifdef _WIN32
+    // No /dev/urandom. rand_s is the C runtime's door to the same thing,
+    // the system generator (RtlGenRandom), four bytes at a time.
+    for (std::size_t at = 0; at < length; at += sizeof(unsigned int)) {
+        unsigned int value = 0;
+        if (rand_s(&value) != 0) return false;
+        std::memcpy(out + at, &value, std::min(sizeof value, length - at));
+    }
+    return true;
+#else
     std::FILE* f = std::fopen("/dev/urandom", "rb");
     if (!f) return false;
     const std::size_t got = std::fread(out, 1, length, f);
     std::fclose(f);
     return got == length;
+#endif
 }
 
 } // namespace

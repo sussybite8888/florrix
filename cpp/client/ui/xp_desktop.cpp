@@ -1253,6 +1253,12 @@ bool XpDesktop::finished(double now) const {
     return active_ && doneAt_ >= 0.0 && now - doneAt_ >= kGoodbyeSeconds;
 }
 
+std::vector<web::Sound> XpDesktop::takeSounds() {
+    std::vector<web::Sound> taken;
+    taken.swap(sounds_);
+    return taken;
+}
+
 std::string XpDesktop::frontTitle() const {
     return windows_.empty() ? std::string() : titleOf(windows_.back());
 }
@@ -1446,6 +1452,7 @@ void XpDesktop::openExplorer(int folder) {
     w.folder = folder;
     windows_.push_back(std::move(w));
     keyTarget_ = windows_.back().id;
+    cue(web::Sound::Navigate);
 }
 
 void XpDesktop::openViewer(Kind kind, int file) {
@@ -1482,6 +1489,19 @@ void XpDesktop::message(const std::string& caption, const std::string& text, Gly
     keyTarget_ = windows_.back().id;
     menu_.open = false;
     startOpen_ = false;
+    switch (glyph) {
+        case Glyph::Error: cue(web::Sound::Error); break;
+        case Glyph::Warning:
+        case Glyph::Info: cue(web::Sound::Notice); break;
+        case Glyph::Question:
+        case Glyph::Bin: cue(web::Sound::Question); break;
+    }
+}
+
+void XpDesktop::crashMessage(const std::string& name) {
+    message(name + " - Application Error", kCrashText, Glyph::Error);
+    // In place of the ordinary error's sound, which message() has just cued.
+    sounds_.back() = web::Sound::CorruptionError;
 }
 
 void XpDesktop::restrictionMessage() {
@@ -1496,6 +1516,7 @@ void XpDesktop::navigate(Win& w, int folder, bool record) {
     w.folder = folder;
     w.selected = -1;
     w.scroll = 0.0;
+    cue(web::Sound::Navigate);
 }
 
 void XpDesktop::openItem(int node, Win* from) {
@@ -1510,7 +1531,7 @@ void XpDesktop::openItem(int node, Win* from) {
             break;
         case XpOpen::Notepad: openViewer(Kind::Notepad, target); break;
         case XpOpen::Picture: openViewer(Kind::Picture, target); break;
-        case XpOpen::Crash: message(n.name + " - Application Error", kCrashText, Glyph::Error); break;
+        case XpOpen::Crash: crashMessage(n.name); break;
         case XpOpen::Message: {
             const Glyph glyph = n.icon == XpIcon::Florr   ? Glyph::Warning
                                 : n.icon == XpIcon::Globe ? Glyph::Info
@@ -1558,7 +1579,8 @@ void XpDesktop::afterDelete(int corruptionBefore) {
     if (left == corruptionBefore) return;
     if (left == 0) {
         doneAt_ = now_;
-        showBalloon("All corruption.exe files deleted", "Returning you to your normal computer...", 0.0);
+        showBalloon("All corruption.exe files deleted", "Returning you to your normal computer...", 0.0,
+                    web::Sound::AllClear);
         return;
     }
     showBalloon("corruption.exe deleted",
@@ -1567,12 +1589,14 @@ void XpDesktop::afterDelete(int corruptionBefore) {
                 kProgressBalloonSeconds);
 }
 
-void XpDesktop::showBalloon(const std::string& title, const std::string& body, double lasts) {
+void XpDesktop::showBalloon(const std::string& title, const std::string& body, double lasts,
+                            web::Sound sound) {
     balloon_.title = title;
     balloon_.body = body;
     balloon_.shownAt = now_;
     balloon_.lasts = lasts;
     balloon_.visible = true;
+    cue(sound);
 }
 
 void XpDesktop::showQuestBalloon() {
@@ -1599,9 +1623,7 @@ void XpDesktop::startItem(int action) {
             openItem(fs_.find("Internet Explorer"), nullptr);
             break;
         case StartAction::Florr: openItem(fs_.find("My Computer/Local Disk (C:)/Program Files/florr/florr.exe"), nullptr); break;
-        case StartAction::Corruption:
-            message("corruption.exe - Application Error", kCrashText, Glyph::Error);
-            break;
+        case StartAction::Corruption: crashMessage("corruption.exe"); break;
         case StartAction::Restricted: restrictionMessage(); break;
         case StartAction::LogOff:
         case StartAction::TurnOff:
@@ -1652,6 +1674,11 @@ void XpDesktop::update(const XpInput& in, double width, double height, double no
     hand_ = false;
 
     const double t = now - openedAt_;
+    // The startup sound, as the desktop fades in out of the black.
+    if (!startupSounded_ && t >= kBlackSeconds) {
+        startupSounded_ = true;
+        cue(web::Sound::DesktopStartup);
+    }
     // Nothing to click on while the screen is still coming up.
     if (t < kBlackSeconds + kFadeSeconds * 0.5) return;
     if (!questShown_ && t >= kQuestDelaySeconds) {
@@ -2038,6 +2065,9 @@ void XpDesktop::answer(int boxId, int button) {
     const int before = fs_.corruptionLeft();
     if (confirm == fs_.recycleBin()) fs_.emptyRecycleBin();
     else fs_.remove(confirm);
+    // Thrown away -- and when a corruption.exe went with it, the thing inside
+    // it dying too.
+    cue(fs_.corruptionLeft() < before ? web::Sound::Purge : web::Sound::Recycle);
     afterDelete(before);
 }
 

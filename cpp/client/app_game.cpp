@@ -24,12 +24,14 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#include <emscripten/html5.h>
 #endif
 
 #include "client/render/art_cache.h"
 #include "client/ui/draw.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_style.h"
+#include "client/web/audio.h"
 #include "shared/game/constants.h"
 
 #ifdef __EMSCRIPTEN__
@@ -193,6 +195,14 @@ constexpr double kGlitchCrashHoldSeconds = 1.0;
 /// The player's body colour on the stop screen: a step lighter than the
 /// Windows blue behind it, so the flower's own darker rim reads against it.
 constexpr std::uint32_t kGlitchFlowerBlue = 0x4FA6F2u;
+
+/// The jumpscare's beats, in seconds: the lunge in, a hold staring back (the
+/// lunge is part of it), then a fade that hands the screen to the death card
+/// sliding in underneath. Short on purpose: a jumpscare is a flinch, not a
+/// cutscene. Shared by the picture and the scream, so the two land together.
+constexpr double kJumpscareGrowSeconds = 0.14;   // the flower rushing the screen
+constexpr double kJumpscareHoldSeconds = 0.45;   // full and shaking
+constexpr double kJumpscareFadeSeconds = 0.35;   // dissolving to the card
 
 } // namespace
 
@@ -488,15 +498,17 @@ void App::drawDeathCard(Canvas& canvas, double time) {
     button(canvas, card.closeBox, "Close", overClose, overClose && pressing, closeStyle);
 }
 
+void App::beginJumpscare() {
+    jumpscareStartSeconds_ = timeSeconds_;
+    web::playJumpscareSound(kJumpscareGrowSeconds, kJumpscareHoldSeconds, kJumpscareFadeSeconds);
+}
+
 void App::drawJumpscare(Canvas& canvas, double time) {
     if (jumpscareStartSeconds_ < 0.0) return;
 
-    // The lunge in, a hold staring back, then a fade that hands the screen to
-    // the death card sliding in underneath. Short on purpose: a jumpscare is a
-    // flinch, not a cutscene.
-    constexpr double kGrowSeconds = 0.14;   // the flower rushing the screen
-    constexpr double kHoldSeconds = 0.45;   // full and shaking
-    constexpr double kFadeSeconds = 0.35;   // dissolving to the card
+    constexpr double kGrowSeconds = kJumpscareGrowSeconds;
+    constexpr double kHoldSeconds = kJumpscareHoldSeconds;
+    constexpr double kFadeSeconds = kJumpscareFadeSeconds;
     const double elapsed = time - jumpscareStartSeconds_;
     if (elapsed >= kHoldSeconds + kFadeSeconds) {
         jumpscareStartSeconds_ = -1.0;
@@ -543,6 +555,20 @@ void App::drawJumpscare(Canvas& canvas, double time) {
     renderer_.drawFlowerBody(canvas, flower, time);
     canvas.setGlobalAlpha(1.0f);
     canvas.restore();
+}
+
+void App::beginGlitch() {
+    glitchStartSeconds_ = timeSeconds_;
+    glitchRecovers_ = menus_.settings().glitched;
+    web::playGlitchSound(kGlitchTearSeconds, kGlitchBsodSeconds, kGlitchCrashHoldSeconds);
+    // The crash swallows the whole screen, and nobody clicks for it: the
+    // desktop build switches at once, and a page does if the player's
+    // last key or click is still fresh (see Window::requestFullscreen).
+    window_.requestFullscreen();
+    if (!menus_.settings().glitched) {
+        menus_.settings().glitched = true;
+        menus_.settings().save(settingsPath());
+    }
 }
 
 void App::drawGlitch(Canvas& canvas, double time) {
@@ -738,6 +764,9 @@ void App::crashGlitched() {
     // streaming the world into a client that will never read it again.
     persist();
     net_.disconnect();
+    // The power going, which the page plays out after the runtime has died:
+    // the sound is scheduled whole, and the page's audio outlives the wasm.
+    web::playSound(web::Sound::PowerCut);
     if (crashHook_) crashHook_();
 #ifdef __EMSCRIPTEN__
     // Stopped first, so nothing calls back into the aborted runtime, and the
@@ -752,6 +781,9 @@ void App::crashGlitched() {
 void App::recoverFromGlitch() {
     glitchStartSeconds_ = -1.0;
     glitchRecovers_ = false;
+    // The "restart" sounds like one: the power goes, and the desktop's own
+    // startup comes up out of the black after it.
+    web::playSound(web::Sound::PowerCut);
     // The flower is taken off the server the way Leave takes it, so the title
     // is what is waiting behind the desktop. Only from the world: a socket
     // that dropped during the crash has already put the client on the screen
@@ -810,11 +842,24 @@ void App::drawXpDesktop(Canvas& canvas) {
 }
 
 void App::leaveXpDesktop() {
-    xpDesktop_.close();
-    // Before anything paints this frame, so the wipe holds up the desktop's
-    // last frame and opens onto the title behind it.
-    beginSceneWipe(false);
-    net_.addLocalAnnouncement("M28", "Something didn't go to plan");
+    // "Returning you to your normal computer": the game exits, the ordinary
+    // way. step() reports the end after this frame, and run() -- or the page's
+    // loop -- calls shutdown(), which saves the settings and the session, so
+    // the next launch signs straight back in. The desktop stays up for that
+    // last frame, so nothing else flashes on the way out. M28's word on what
+    // happened waits for the next launch's title screen.
+    menus_.settings().glitchAnnouncement = true;
+    // Played out by the page after its loop has stopped, as the crash's is.
+    web::playSound(web::Sound::DesktopShutdown);
+    // Closed by hand, as the crash closes it: the server reaps the session at
+    // once, and a page, which outlives its stopped loop, is not left holding
+    // a socket nothing reads.
+    net_.disconnect();
+    running_ = false;
+#ifdef __EMSCRIPTEN__
+    // A page cannot close itself; it gives the screen back instead.
+    emscripten_exit_fullscreen();
+#endif
 }
 
 void App::tallyRunLoot() {

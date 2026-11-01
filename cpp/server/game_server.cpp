@@ -614,6 +614,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     listener_.certPath = config.certPath;
     listener_.keyPath = config.keyPath;
     listener_.webRoot = config.webRoot;
+    listener_.loopbackOnly = config.loopbackOnly;
     if (!listener_.start(config.port, errorOut)) return false;
 
     // Seeded before the first tick can set it: a message may be serviced ahead

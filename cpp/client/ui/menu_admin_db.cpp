@@ -292,7 +292,11 @@ std::string timestampHint(const std::string& key, const net::AdminDbNode& node) 
     if (!named || node.number < 1.0e12 || node.number >= 4.1e12) return {};
     const std::time_t seconds = static_cast<std::time_t>(node.number / 1000.0);
     std::tm utc{};
+#ifdef _WIN32
+    if (gmtime_s(&utc, &seconds) != 0) return {};
+#else
     if (gmtime_r(&seconds, &utc) == nullptr) return {};
+#endif
     char buffer[32];
     std::strftime(buffer, sizeof buffer, "%Y-%m-%d %H:%M UTC", &utc);
     return buffer;

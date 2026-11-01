@@ -14,7 +14,12 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <string>
+
+#ifndef __EMSCRIPTEN__
+#include <SDL.h>
+#endif
 
 #include "client/app.h"
 #include "shared/core/text.h"
@@ -215,10 +220,24 @@ int main(int argc, char** argv) {
         0);
     return 0;
 #else
+    // Started by a double-click, the working directory is wherever the shell
+    // likes -- a Mac's is the home folder -- so when it holds no content the
+    // copy beside the program is the one to read, as a packaged build ships it.
+    if (!std::ifstream(config.dataDir + "/mobs.json")) {
+        if (char* base = SDL_GetBasePath()) {
+            const std::string beside = std::string(base) + "data";
+            SDL_free(base);
+            if (std::ifstream(beside + "/mobs.json")) config.dataDir = beside;
+        }
+    }
+
     flix::App app;
     std::string error;
     if (!app.start(config, error)) {
         std::fprintf(stderr, "could not start: %s\n", error.c_str());
+        // A Windows GUI program has no console for that to reach.
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "florr",
+                                 ("Could not start the game: " + error).c_str(), nullptr);
         return 1;
     }
     app.run();

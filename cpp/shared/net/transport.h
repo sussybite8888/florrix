@@ -152,9 +152,14 @@ public:
     Listener();
     ~Listener();
 
-    /// Binds and listens. Returns false with `errorOut` set on failure.
+    /// Binds and listens. Returns false with `errorOut` set on failure. Port
+    /// 0 asks the system for any free port; port() says which it chose.
     bool start(std::uint16_t port, std::string& errorOut);
     void stop();
+
+    /// The port start() bound: the one asked for, or the free one chosen for
+    /// a request of 0.
+    std::uint16_t port() const { return port_; }
 
     /// Services sockets for up to `timeoutMillis`, dispatching to `handler`.
     /// Returns the number of frames delivered.
@@ -194,6 +199,12 @@ public:
     /// serves no files at all.
     std::string webRoot;
 
+    /// Listen on 127.0.0.1 only, set before start(): nothing off this machine
+    /// can connect, and Windows has no firewall prompt to raise for it. The
+    /// native offline build's server, whose only client is in the same
+    /// process. Ignored by the web backend.
+    bool loopbackOnly = false;
+
 private:
     void acceptPending(TransportHandler& handler);
     void drop(Connection& c, TransportHandler& handler, const std::string& reason);
@@ -214,6 +225,7 @@ private:
                  int& delivered, std::string& error);
 
     int listenFd_ = -1;
+    std::uint16_t port_ = 0;
     ConnectionId nextId_ = 1;
     std::vector<std::unique_ptr<Connection>> connections_;
     std::vector<std::byte> frameScratch_;

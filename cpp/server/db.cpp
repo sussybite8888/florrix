@@ -12,6 +12,11 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
+#ifdef _WIN32
+#include <direct.h>
+#include <filesystem>
+#include <io.h>
+#endif
 
 #include "shared/core/civil_date.h"
 #include "shared/core/text.h"
@@ -19,6 +24,36 @@
 
 namespace flix {
 namespace {
+
+/// The three file-system calls a save makes that Windows spells differently.
+void syncToDisk(std::FILE* file) {
+#ifdef _WIN32
+    ::_commit(::_fileno(file));
+#else
+    ::fsync(::fileno(file));
+#endif
+}
+
+bool makeDirectory(const std::string& directory) {
+#ifdef _WIN32
+    return ::_mkdir(directory.c_str()) == 0;
+#else
+    return ::mkdir(directory.c_str(), 0755) == 0;
+#endif
+}
+
+/// Moves `from` over `to`, replacing it. rename(2) does that atomically, but
+/// Windows' rename() refuses a target that exists; filesystem::rename replaces
+/// it there (MoveFileEx), atomically on one volume.
+bool replaceFile(const std::string& from, const std::string& to) {
+#ifdef _WIN32
+    std::error_code error;
+    std::filesystem::rename(from, to, error);
+    return !error;
+#else
+    return std::rename(from.c_str(), to.c_str()) == 0;
+#endif
+}
 
 #ifdef __EMSCRIPTEN__
 /// The size of `file` on the HOST's filesystem, asked of Node's own fs: -1
@@ -757,7 +792,7 @@ bool Database::save() {
     if (!file) return false;
     const std::size_t written = text.empty() ? 0 : std::fwrite(text.data(), 1, text.size(), file);
     const bool flushed = std::fflush(file) == 0;
-    if (flushed) ::fsync(::fileno(file));
+    if (flushed) syncToDisk(file);
     const bool closed = std::fclose(file) == 0;
     if (written != text.size() || !flushed || !closed) {
         std::remove(tmp.c_str());
@@ -778,7 +813,7 @@ bool Database::save() {
 
     // rename(2) is atomic within a filesystem: either the old file or the new
     // one is there, never a half of either.
-    if (std::rename(tmp.c_str(), path_.c_str()) != 0) {
+    if (!replaceFile(tmp, path_)) {
         std::remove(tmp.c_str());
         return false;
     }
@@ -854,7 +889,7 @@ bool Database::backup(const std::string& label, BackupInfo& out, std::string& er
     if (safeLabel.empty()) safeLabel = "manual";
 
     const std::string directory = backupDirectory();
-    if (::mkdir(directory.c_str(), 0755) != 0 && errno != EEXIST) {
+    if (!makeDirectory(directory) && errno != EEXIST) {
         errorOut = "could not create " + directory;
         return false;
     }
@@ -882,7 +917,7 @@ bool Database::backup(const std::string& label, BackupInfo& out, std::string& er
     }
     const std::size_t written = text.empty() ? 0 : std::fwrite(text.data(), 1, text.size(), handle);
     const bool flushed = std::fflush(handle) == 0;
-    if (flushed) ::fsync(::fileno(handle));
+    if (flushed) syncToDisk(handle);
     const bool closed = std::fclose(handle) == 0;
 
     struct stat info {};

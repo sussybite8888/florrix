@@ -2,9 +2,16 @@
 #include "shared/net/protocol.h"
 
 #include <cerrno>
+#include <climits>
 #include <cstring>
 
-#ifndef __EMSCRIPTEN__
+#if defined(_WIN32)
+// Winsock's select() takes any number of sockets up to FD_SETSIZE, which is 64
+// unless it is raised before the header is read.
+#define FD_SETSIZE 1024
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#elif !defined(__EMSCRIPTEN__)
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -38,16 +45,122 @@ double steadyMillis() {
 }
 
 #ifndef __EMSCRIPTEN__
+#ifdef _WIN32
+// Winsock in the BSD shapes the rest of this file is written in. A SOCKET is a
+// handle rather than a descriptor, but on the 32-bit Windows build it is 32
+// bits wide and its invalid value is all ones, so it lives in the same int
+// every descriptor here does, -1 included.
+using ssize_t = int;
+
+/// Winsock has to be started before the first socket, once per process.
+void ensureSockets() {
+    static const bool started = [] {
+        WSADATA data;
+        return ::WSAStartup(MAKEWORD(2, 2), &data) == 0;
+    }();
+    (void)started;
+}
+
+SOCKET handle(int fd) { return static_cast<SOCKET>(static_cast<unsigned int>(fd)); }
+int descriptor(SOCKET s) { return s == INVALID_SOCKET ? -1 : static_cast<int>(s); }
+
+void closeSocket(int fd) { ::closesocket(handle(fd)); }
+
+int socketErrorCode() { return ::WSAGetLastError(); }
+
+std::string socketErrorText(int code) {
+    char text[256] = {0};
+    const DWORD length =
+        ::FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr,
+                         static_cast<DWORD>(code), 0, text, sizeof text, nullptr);
+    std::string message(text, length);
+    while (!message.empty() && (message.back() == '\r' || message.back() == '\n' ||
+                                message.back() == '.')) {
+        message.pop_back();
+    }
+    return message.empty() ? "socket error " + std::to_string(code) : message;
+}
+
+bool setNonBlocking(int fd) {
+    u_long on = 1;
+    return ::ioctlsocket(handle(fd), FIONBIO, &on) == 0;
+}
+
+bool inProgress(int code) { return code == WSAEWOULDBLOCK || code == WSAEINPROGRESS; }
+
+/// poll() over select(). WSAPoll would be the obvious stand-in, but until
+/// Windows 10 2004 it never reports a connect that was refused -- a client
+/// dialling a server that is down would wait on it for ever -- and select()
+/// says so in its exception set on every Windows there is.
+int pollSockets(pollfd* fds, std::size_t count, int timeoutMillis) {
+    fd_set readable, writable, failed;
+    FD_ZERO(&readable);
+    FD_ZERO(&writable);
+    FD_ZERO(&failed);
+    for (std::size_t i = 0; i < count; ++i) {
+        fds[i].revents = 0;
+        if (fds[i].events & POLLIN) FD_SET(fds[i].fd, &readable);
+        if (fds[i].events & POLLOUT) FD_SET(fds[i].fd, &writable);
+        FD_SET(fds[i].fd, &failed);
+    }
+    timeval wait{};
+    wait.tv_sec = timeoutMillis / 1000;
+    wait.tv_usec = (timeoutMillis % 1000) * 1000;
+    const int ready = ::select(0, &readable, &writable, &failed, timeoutMillis < 0 ? nullptr : &wait);
+    if (ready <= 0) return ready;
+    int signalled = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        if (FD_ISSET(fds[i].fd, &readable)) fds[i].revents |= POLLIN;
+        if (FD_ISSET(fds[i].fd, &writable)) fds[i].revents |= POLLOUT;
+        if (FD_ISSET(fds[i].fd, &failed)) fds[i].revents |= POLLERR;
+        if (fds[i].revents) ++signalled;
+    }
+    return signalled;
+}
+#else
+void ensureSockets() {}
+
+int descriptor(int fd) { return fd; }
+
+void closeSocket(int fd) { ::close(fd); }
+
+int socketErrorCode() { return errno; }
+
+std::string socketErrorText(int code) { return std::strerror(code); }
+
 bool setNonBlocking(int fd) {
     const int flags = ::fcntl(fd, F_GETFL, 0);
     return flags >= 0 && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
+bool inProgress(int code) { return code == EINPROGRESS; }
+
+int pollSockets(pollfd* fds, std::size_t count, int timeoutMillis) {
+    return ::poll(fds, static_cast<nfds_t>(count), timeoutMillis);
+}
+#endif
+
+std::string socketError() { return socketErrorText(socketErrorCode()); }
+
+pollfd pollEntry(int fd, short events) {
+    pollfd entry{};
+    entry.fd = fd;
+#ifdef _WIN32
+    entry.fd = handle(fd);
+#endif
+    entry.events = events;
+    return entry;
 }
 
 void setNoDelay(int fd) {
     // Snapshots are small and latency-critical; Nagle would hold a partial
     // one back waiting for company it will not get.
     int on = 1;
+#ifdef _WIN32
+    ::setsockopt(handle(fd), IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&on), sizeof on);
+#else
     ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof on);
+#endif
 }
 
 std::string describePeer(const sockaddr_storage& addr) {
@@ -65,7 +178,14 @@ std::string describePeer(const sockaddr_storage& addr) {
     return std::string(host) + ":" + std::to_string(port);
 }
 
-bool wouldBlock() { return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR; }
+bool wouldBlock() {
+#ifdef _WIN32
+    const int code = socketErrorCode();
+    return code == WSAEWOULDBLOCK || code == WSAEINTR;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
+#endif
+}
 #else
 /// How far ahead of the transport this side will run before it stops feeding a
 /// channel. A socket says "not now" with EAGAIN; a WebSocket or a QUIC stream
@@ -92,7 +212,7 @@ void Connection::shutdownNow() {
 #ifdef __EMSCRIPTEN__
     web::close(fd_);
 #else
-    ::close(fd_);
+    closeSocket(fd_);
 #endif
     fd_ = -1;
 }
@@ -176,7 +296,12 @@ bool Connection::readAvailable(std::string& errorOut) {
     while (true) {
         const std::size_t at = inbound_.size();
         inbound_.resize(at + kReadChunk);
+#ifdef _WIN32
+        const ssize_t n = ::recv(handle(fd_), reinterpret_cast<char*>(inbound_.data() + at),
+                                 static_cast<int>(kReadChunk), 0);
+#else
         const ssize_t n = ::recv(fd_, inbound_.data() + at, kReadChunk, 0);
+#endif
         if (n > 0) {
             inbound_.resize(at + static_cast<std::size_t>(n));
             noteArrival(static_cast<std::size_t>(n), steadyMillis());
@@ -188,7 +313,7 @@ bool Connection::readAvailable(std::string& errorOut) {
         inbound_.resize(at);
         if (n == 0) { errorOut = "peer closed"; return false; }
         if (wouldBlock()) return true;
-        errorOut = std::strerror(errno);
+        errorOut = socketError();
         return false;
     }
 }
@@ -196,6 +321,11 @@ bool Connection::readAvailable(std::string& errorOut) {
 bool Connection::writeAvailable(std::string& errorOut) {
     while (outboundSent_ < outbound_.size()) {
         const std::size_t remaining = outbound_.size() - outboundSent_;
+#ifdef _WIN32
+        // Windows raises no SIGPIPE to suppress.
+        const ssize_t n = ::send(handle(fd_), reinterpret_cast<const char*>(outbound_.data() + outboundSent_),
+                                 static_cast<int>(std::min<std::size_t>(remaining, INT_MAX)), 0);
+#else
         const ssize_t n = ::send(fd_, outbound_.data() + outboundSent_, remaining,
 #ifdef MSG_NOSIGNAL
                                  MSG_NOSIGNAL
@@ -203,12 +333,13 @@ bool Connection::writeAvailable(std::string& errorOut) {
                                  0
 #endif
         );
+#endif
         if (n > 0) {
             outboundSent_ += static_cast<std::size_t>(n);
             continue;
         }
         if (wouldBlock()) break;
-        errorOut = std::strerror(errno);
+        errorOut = socketError();
         return false;
     }
 
@@ -299,6 +430,7 @@ bool Listener::start(std::uint16_t port, std::string& errorOut) {
         errorOut = "port " + std::to_string(port) + " is already listened on in this runtime";
         return false;
     }
+    port_ = port;
     return true;
 }
 
@@ -327,41 +459,58 @@ void Listener::acceptPending(TransportHandler& handler) {
 
 bool Listener::start(std::uint16_t port, std::string& errorOut) {
     stop();
+    ensureSockets();
 
-    listenFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (listenFd_ < 0) { errorOut = std::strerror(errno); return false; }
+    listenFd_ = descriptor(::socket(AF_INET, SOCK_STREAM, 0));
+    if (listenFd_ < 0) { errorOut = socketError(); return false; }
 
+#ifndef _WIN32
+    // Windows reads SO_REUSEADDR as leave to share a port another socket is
+    // already listening on, which is not what this is for; it rebinds a
+    // listener's port out of TIME_WAIT without being asked.
     int on = 1;
     ::setsockopt(listenFd_, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
+#endif
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr = htonl(loopbackOnly ? INADDR_LOOPBACK : INADDR_ANY);
     addr.sin_port = htons(port);
 
-    if (::bind(listenFd_, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) {
-        errorOut = "bind: " + std::string(std::strerror(errno));
+#ifdef _WIN32
+    const SOCKET listening = handle(listenFd_);
+#else
+    const int listening = listenFd_;
+#endif
+    if (::bind(listening, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0) {
+        errorOut = "bind: " + socketError();
         stop();
         return false;
     }
-    if (::listen(listenFd_, 128) != 0) {
-        errorOut = "listen: " + std::string(std::strerror(errno));
+    if (::listen(listening, 128) != 0) {
+        errorOut = "listen: " + socketError();
         stop();
         return false;
     }
     if (!setNonBlocking(listenFd_)) {
-        errorOut = "fcntl: " + std::string(std::strerror(errno));
+        errorOut = "fcntl: " + socketError();
         stop();
         return false;
     }
 
+    // Port 0 asked for any free one; the one the system chose is the answer.
+    sockaddr_in bound{};
+    socklen_t boundLength = sizeof bound;
+    port_ = ::getsockname(listening, reinterpret_cast<sockaddr*>(&bound), &boundLength) == 0
+                ? ntohs(bound.sin_port)
+                : port;
     return true;
 }
 
 void Listener::stop() {
     connections_.clear();
     if (listenFd_ >= 0) {
-        ::close(listenFd_);
+        closeSocket(listenFd_);
         listenFd_ = -1;
     }
 }
@@ -370,14 +519,18 @@ void Listener::acceptPending(TransportHandler& handler) {
     while (true) {
         sockaddr_storage addr{};
         socklen_t addrLen = sizeof addr;
+#ifdef _WIN32
+        const int fd = descriptor(::accept(handle(listenFd_), reinterpret_cast<sockaddr*>(&addr), &addrLen));
+#else
         const int fd = ::accept(listenFd_, reinterpret_cast<sockaddr*>(&addr), &addrLen);
+#endif
         if (fd < 0) {
             // EMFILE means the process is out of descriptors. Stopping the
             // accept loop leaves the pending connection queued rather than
             // spinning on the same error for the rest of the tick.
             break;
         }
-        if (!setNonBlocking(fd)) { ::close(fd); continue; }
+        if (!setNonBlocking(fd)) { closeSocket(fd); continue; }
         setNoDelay(fd);
 
         auto connection = std::make_unique<Connection>(fd, nextId_++, describePeer(addr));
@@ -496,15 +649,15 @@ int Listener::poll(TransportHandler& handler, int timeoutMillis) {
 
     std::vector<pollfd> fds;
     fds.reserve(connections_.size() + 1);
-    fds.push_back(pollfd{listenFd_, POLLIN, 0});
+    fds.push_back(pollEntry(listenFd_, POLLIN));
     for (auto& c : connections_) {
         if (!c->open()) continue;
         short events = POLLIN;
         if (c->wantsWrite()) events |= POLLOUT;
-        fds.push_back(pollfd{c->fd(), events, 0});
+        fds.push_back(pollEntry(c->fd(), events));
     }
 
-    const int ready = ::poll(fds.data(), static_cast<nfds_t>(fds.size()), timeoutMillis);
+    const int ready = pollSockets(fds.data(), fds.size(), timeoutMillis);
     if (ready < 0 && !wouldBlock()) return 0;
 
     if (ready > 0 && (fds[0].revents & POLLIN)) acceptPending(handler);
@@ -516,7 +669,7 @@ int Listener::poll(TransportHandler& handler, int timeoutMillis) {
     std::size_t slot = 1;
     for (std::size_t i = 0; i < connections_.size() && slot < fds.size(); ++i) {
         Connection& c = *connections_[i];
-        if (!c.open() || fds[slot].fd != c.fd()) continue;
+        if (!c.open() || fds[slot].fd != pollEntry(c.fd(), 0).fd) continue;
         const short revents = fds[slot].revents;
         ++slot;
         if (revents == 0) continue;
@@ -650,6 +803,7 @@ int Dialer::poll(TransportHandler& handler, int timeoutMillis) {
 
 bool Dialer::connect(const std::string& host, std::uint16_t port, std::string& errorOut) {
     disconnect();
+    ensureSockets();
 
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
@@ -666,23 +820,29 @@ bool Dialer::connect(const std::string& host, std::uint16_t port, std::string& e
     }
 
     int fd = -1;
+    int lastError = 0;
     for (addrinfo* it = results; it; it = it->ai_next) {
-        fd = ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+        fd = descriptor(::socket(it->ai_family, it->ai_socktype, it->ai_protocol));
         if (fd < 0) continue;
-        if (!setNonBlocking(fd)) { ::close(fd); fd = -1; continue; }
+        if (!setNonBlocking(fd)) { closeSocket(fd); fd = -1; continue; }
         setNoDelay(fd);
 
+#ifdef _WIN32
+        const int result = ::connect(handle(fd), it->ai_addr, static_cast<int>(it->ai_addrlen));
+#else
         const int result = ::connect(fd, it->ai_addr, it->ai_addrlen);
-        // EINPROGRESS is the expected answer for a non-blocking connect; the
+#endif
+        // In progress is the expected answer for a non-blocking connect; the
         // handshake finishes when poll() reports the socket writable.
-        if (result == 0 || errno == EINPROGRESS) break;
-        ::close(fd);
+        lastError = socketErrorCode();
+        if (result == 0 || inProgress(lastError)) break;
+        closeSocket(fd);
         fd = -1;
     }
     ::freeaddrinfo(results);
 
     if (fd < 0) {
-        errorOut = "cannot connect to " + host + ":" + service + ": " + std::strerror(errno);
+        errorOut = "cannot connect to " + host + ":" + service + ": " + socketErrorText(lastError);
         state_ = State::Failed;
         error_ = errorOut;
         return false;
@@ -702,16 +862,20 @@ int Dialer::poll(TransportHandler& handler, int timeoutMillis) {
     short events = POLLIN;
     if (state_ == State::Connecting || connection_->wantsWrite()) events |= POLLOUT;
 
-    pollfd fd{connection_->fd(), events, 0};
-    const int ready = ::poll(&fd, 1, timeoutMillis);
+    pollfd fd = pollEntry(connection_->fd(), events);
+    const int ready = pollSockets(&fd, 1, timeoutMillis);
     if (ready <= 0) return 0;
 
     if (state_ == State::Connecting) {
         int soError = 0;
         socklen_t len = sizeof soError;
+#ifdef _WIN32
+        ::getsockopt(fd.fd, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&soError), &len);
+#else
         ::getsockopt(connection_->fd(), SOL_SOCKET, SO_ERROR, &soError, &len);
+#endif
         if (soError != 0) {
-            fail(std::strerror(soError), &handler);
+            fail(socketErrorText(soError), &handler);
             return 0;
         }
         if (fd.revents & (POLLOUT | POLLIN)) {

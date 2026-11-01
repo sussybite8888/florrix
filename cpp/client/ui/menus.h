@@ -319,6 +319,10 @@ struct ClientSettings {
     /// a comfort setting -- a one-way corruption flag the player cannot clear
     /// from the menu, only by deleting their settings.
     bool glitched = false;
+    /// Set when the corrupted desktop's hunt is won and the game exits on it;
+    /// the next launch's title screen raises M28's announcement and clears
+    /// it (App::frame).
+    bool glitchAnnouncement = false;
     /// Whether the eleven-step tutorial has been finished or skipped, and how
     /// far it had got. The TypeScript client kept the same pair in
     /// localStorage as `tutorial_completed` and `tutorial_step`; they ride here

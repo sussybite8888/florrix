@@ -3479,6 +3479,89 @@ void WorldRenderer::drawPetalRingMob(Canvas& canvas, const MobConfig& config, co
     }
 }
 
+void WorldRenderer::drawAppIcon(Canvas& canvas, double size) const {
+    if (!content_ || !sprites_) return;
+    const std::uint16_t type = content_->mobIndex("glitch_flower");
+    if (type == kInvalidIndex) return;
+    const MobConfig& config = content_->mob(type);
+
+    // The ring sits 2.4 body radii out with half a petal past that. 2.7 radii
+    // to the square's edge holds it, just: framed any looser the face is a
+    // speck at the sizes a taskbar shows.
+    constexpr double kFrameRadii = 2.7;
+    const double radius = size * 0.5 / kFrameRadii;
+    const Vec2 centre{size * 0.5, size * 0.5};
+
+    // One fixed moment, so the icon is one picture: the first glitch bucket
+    // from the start of the clock whose burst also pulls the colour fringe
+    // out, so the tear shows at full strength.
+    constexpr std::uint32_t kSeed = 0xF1022Eu;
+    std::uint32_t bucket = 0;
+    while (!glitchBursts(kSeed, bucket) || hash01(kSeed ^ 0x27D4EB2Fu, bucket) >= 0.5) ++bucket;
+    const double when = (bucket + 0.5) * 70.0 / 1000.0;
+
+    // Right of the tear, the player: a ring of basic petals where the glitch
+    // flower's petals are at that moment, and the body over it.
+    canvas.save();
+    canvas.beginPath();
+    canvas.rect(static_cast<float>(centre.x), 0, static_cast<float>(size - centre.x),
+                static_cast<float>(size));
+    canvas.clip();
+    const std::uint16_t basic = content_->petalIndex("basic");
+    const int count = static_cast<int>(clamp(config.petalRing.count, 0, 16));
+    if (basic != kInvalidIndex && config.petalRing.petalIndex != kInvalidIndex && count > 0) {
+        const PetalConfig& ringPetal = content_->petal(config.petalRing.petalIndex);
+        const PetalConfig& petal = content_->petal(basic);
+        const double orbit = radius * config.petalRing.orbitScale;
+        const double petalSize =
+            radius * config.petalRing.petalScale * petal.size * petalArtScale(&petal);
+        const double speed = ringPetal.speed > 0 ? ringPetal.speed : 1.0;
+        const double spin =
+            config.petalRing.spins ? std::fmod(when * kPetalSpinRate * speed, kTau) : 0.0;
+        for (int i = 0; i < count; ++i) {
+            const double angle = i * (kTau / count) + spin;
+            sprites_->drawPetal(canvas, basic, Rarity::Common, centre.x + std::cos(angle) * orbit,
+                                centre.y + std::sin(angle) * orbit, petalSize, 0.0, when);
+        }
+    }
+    canvas.translate(static_cast<float>(centre.x), static_cast<float>(centre.y));
+    canvas.scale(static_cast<float>(radius / kFlowerArtRadius),
+                 static_cast<float>(radius / kFlowerArtRadius));
+    RemoteEntity player;
+    player.kind = net::EntityKind::Player;
+    player.radius = kFlowerArtRadius;
+    drawFlowerBody(canvas, player, when);
+    canvas.restore();
+
+    // Left of it, the glitch flower exactly as the entity pass paints one.
+    MobDraw mob;
+    mob.netId = kSeed;
+    mob.typeIndex = type;
+    mob.radius = radius;
+    MobPose pose;
+    pose.diameter = radius * 2.0;
+    pose.timeSeconds = when;
+    canvas.save();
+    canvas.beginPath();
+    canvas.rect(0, 0, static_cast<float>(centre.x), static_cast<float>(size));
+    canvas.clip();
+    drawGlitched(canvas, centre, glitchFlowerReach(config, pose), kSeed, when,
+                 [&](Canvas& target) {
+                     drawPetalRingMob(target, config, mob, radius, 0.0, false, {}, when);
+                 });
+    canvas.restore();
+}
+
+void WorldRenderer::drawMacAppIcon(Canvas& canvas, double size) const {
+    constexpr double kGridFill = 824.0 / 1024.0;
+    const double inner = size * kGridFill;
+    const float margin = static_cast<float>((size - inner) * 0.5);
+    canvas.save();
+    canvas.translate(margin, margin);
+    drawAppIcon(canvas, inner);
+    canvas.restore();
+}
+
 bool WorldRenderer::poseMob(const MobDraw& mob, const MobConfig* config, double zoom,
                             double clockSeconds, MobPose& pose) const {
     // A mob that has locked on beats its wings twice as fast, but only the two

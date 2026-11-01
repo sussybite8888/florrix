@@ -1740,16 +1740,17 @@ void Window::setCursorShape(CursorShape shape) {
 
 void Window::requestFullscreen() {
 #ifdef __EMSCRIPTEN__
-  // deferUntilInEventHandler = EM_TRUE: the Fullscreen API only grants a switch
-  // from inside a user gesture, and this is called from the frame loop, which
-  // is not one. So emscripten holds the request and makes it from inside the
-  // next browser event the player generates. The player is entering the game,
-  // so their very next move, click or key carries it through within a moment.
+  // The Fullscreen API grants a switch only while the page has transient
+  // activation: a key or click in the last few seconds. emscripten checks
+  // navigator.userActivation, so with one the request is made right here, from
+  // the frame loop, with no click. Without one, deferUntilInEventHandler =
+  // EM_TRUE holds it for the next key or click this window's own callbacks
+  // hear (they are emscripten's, which is where held requests are run).
   // The canvas is CSS-sized to the viewport and its backing store is re-read
   // from its client size every pump, so the frame after the switch just draws
   // at the full-screen resolution; nothing else here has to know.
-  const std::string selector = "#" + impl_->elementId;
-  emscripten_request_fullscreen(selector.c_str(), EM_TRUE);
+  // const std::string selector = "#" + impl_->elementId;
+  // emscripten_request_fullscreen(selector.c_str(), EM_TRUE);
 #else
   // Desktop fullscreen, the FULLSCREEN_DESKTOP ("borderless") kind: it keeps
   // the desktop's resolution and just grows the window to fill the display,
@@ -1759,5 +1760,24 @@ void Window::requestFullscreen() {
   // SDL window size, rebuilds the canvas and texture to match, and the frame
   // after the switch simply draws at the screen's resolution.
   if (impl_->window) SDL_SetWindowFullscreen(impl_->window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+#endif
+}
+
+void Window::setIcon(const std::vector<std::uint8_t>& rgba, int width, int height) {
+#ifdef __EMSCRIPTEN__
+  (void)rgba; (void)width; (void)height;
+#else
+  if (!impl_->window || width <= 0 || height <= 0 ||
+      rgba.size() < static_cast<size_t>(width) * height * 4) {
+    return;
+  }
+  // SDL copies the pixels into the icon it makes, so the surface only has to
+  // live through the call.
+  SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormatFrom(
+      const_cast<std::uint8_t*>(rgba.data()), width, height, 32, width * 4,
+      SDL_PIXELFORMAT_RGBA32);
+  if (!surface) return;
+  SDL_SetWindowIcon(impl_->window, surface);
+  SDL_FreeSurface(surface);
 #endif
 }

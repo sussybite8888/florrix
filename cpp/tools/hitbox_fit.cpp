@@ -57,6 +57,7 @@
 #include "client/render/sprites.h"
 #include "shared/core/types.h"
 #include "shared/game/config.h"
+#include "tools/png_writer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -508,82 +509,6 @@ constexpr int kPanel = 240;
 constexpr double kPanelHitbox = 50.0;
 constexpr int kGap = 4;
 
-std::uint32_t crc32(const std::uint8_t* data, std::size_t size, std::uint32_t crc = 0) {
-    static std::uint32_t table[256];
-    static bool built = false;
-    if (!built) {
-        for (std::uint32_t n = 0; n < 256; ++n) {
-            std::uint32_t c = n;
-            for (int k = 0; k < 8; ++k) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
-            table[n] = c;
-        }
-        built = true;
-    }
-    crc = ~crc;
-    for (std::size_t i = 0; i < size; ++i) crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-    return ~crc;
-}
-
-// An RGB PNG with stored (uncompressed) deflate blocks: no zlib to link, and
-// a preview is small enough that the size does not matter.
-bool writePng(const std::string& path, int width, int height, const std::vector<std::uint8_t>& rgb) {
-    std::vector<std::uint8_t> raw;
-    raw.reserve(static_cast<std::size_t>(width * 3 + 1) * height);
-    for (int y = 0; y < height; ++y) {
-        raw.push_back(0);
-        raw.insert(raw.end(), rgb.begin() + static_cast<std::ptrdiff_t>(y) * width * 3,
-                   rgb.begin() + static_cast<std::ptrdiff_t>(y + 1) * width * 3);
-    }
-    std::vector<std::uint8_t> zlib{0x78, 0x01};
-    for (std::size_t pos = 0; pos < raw.size();) {
-        const std::size_t len = std::min<std::size_t>(65535, raw.size() - pos);
-        zlib.push_back(pos + len == raw.size() ? 1 : 0);
-        zlib.push_back(static_cast<std::uint8_t>(len & 0xFF));
-        zlib.push_back(static_cast<std::uint8_t>(len >> 8));
-        zlib.push_back(static_cast<std::uint8_t>(~len & 0xFF));
-        zlib.push_back(static_cast<std::uint8_t>((~len >> 8) & 0xFF));
-        zlib.insert(zlib.end(), raw.begin() + static_cast<std::ptrdiff_t>(pos),
-                    raw.begin() + static_cast<std::ptrdiff_t>(pos + len));
-        pos += len;
-    }
-    std::uint32_t a = 1, b = 0;
-    for (std::uint8_t byte : raw) {
-        a = (a + byte) % 65521;
-        b = (b + a) % 65521;
-    }
-    const std::uint32_t adler = (b << 16) | a;
-    for (int shift = 24; shift >= 0; shift -= 8) zlib.push_back(static_cast<std::uint8_t>(adler >> shift));
-
-    FILE* file = std::fopen(path.c_str(), "wb");
-    if (!file) return false;
-    const auto be32 = [](std::uint32_t v, std::uint8_t* out) {
-        for (int i = 0; i < 4; ++i) out[i] = static_cast<std::uint8_t>(v >> (24 - 8 * i));
-    };
-    const auto chunk = [&](const char* type, const std::vector<std::uint8_t>& body) {
-        std::uint8_t head[8];
-        be32(static_cast<std::uint32_t>(body.size()), head);
-        std::copy(type, type + 4, head + 4);
-        std::uint32_t crc = crc32(head + 4, 4);
-        crc = crc32(body.data(), body.size(), crc);
-        std::uint8_t tail[4];
-        be32(crc, tail);
-        std::fwrite(head, 1, 8, file);
-        if (!body.empty()) std::fwrite(body.data(), 1, body.size(), file);
-        std::fwrite(tail, 1, 4, file);
-    };
-    static const std::uint8_t kSignature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
-    std::fwrite(kSignature, 1, 8, file);
-    std::vector<std::uint8_t> header(13, 0);
-    be32(static_cast<std::uint32_t>(width), header.data());
-    be32(static_cast<std::uint32_t>(height), header.data() + 4);
-    header[8] = 8;   // bit depth
-    header[9] = 2;   // truecolour
-    chunk("IHDR", header);
-    chunk("IDAT", zlib);
-    chunk("IEND", {});
-    return std::fclose(file) == 0;
-}
-
 // The art at a given scale and offset, over grass, with the hitbox in red.
 std::vector<std::uint8_t> artPanel(const SpriteCache& sprites, std::uint16_t index, double scale,
                                    double offsetX, double offsetY) {
@@ -657,7 +582,7 @@ bool writePreview(const std::string& path, const SpriteCache& sprites, std::uint
     };
     ring(fit.outer.r, 255, 220, 40);
     ring(fit.hitboxPx, 255, 40, 40);
-    return writePng(path, width, kPanel, rgb);
+    return tools::writePng(path, width, kPanel, 3, rgb);
 }
 
 // --- output ----------------------------------------------------------------------

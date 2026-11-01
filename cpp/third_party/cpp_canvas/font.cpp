@@ -1,4 +1,5 @@
 #include "font.h"
+#include "file_source.h"
 
 #include <algorithm>
 #include <cctype>
@@ -45,14 +46,9 @@ bool endsWithFontExtension(const std::string& name) {
 } // namespace
 
 bool Font::loadFromFile(const std::string& path) {
-  std::ifstream in(path, std::ios::binary | std::ios::ate);
-  if (!in) return false;
-  const std::streamsize size = in.tellg();
-  if (size <= 0) return false;
-  in.seekg(0);
-  std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
-  if (!in.read(reinterpret_cast<char*>(bytes.data()), size)) return false;
-  return loadFromMemory(std::move(bytes));
+  std::string source;
+  if (!readFileSource(path, source) || source.empty()) return false;
+  return loadFromMemory(std::vector<std::uint8_t>(source.begin(), source.end()));
 }
 
 bool Font::loadFromMemory(std::vector<std::uint8_t> bytes) {

@@ -9,6 +9,7 @@
 
 #include "client/ui/face_metrics.h"
 #include "font.h"
+#include "shared/core/embedded_files.h"
 
 #if defined(__EMSCRIPTEN__)
 #include <cstdio>
@@ -110,6 +111,13 @@ FontState& state() {
 
 #if !defined(__EMSCRIPTEN__)
 bool readFile(const std::string& path, std::vector<std::uint8_t>& out) {
+    // The face compiled into the program, when it carries its content inside
+    // itself (shared/core/embedded_files.h).
+    std::string embedded;
+    if (readEmbeddedFile(path, embedded)) {
+        out.assign(embedded.begin(), embedded.end());
+        return !out.empty();
+    }
     std::ifstream in(path, std::ios::binary);
     if (!in) return false;
     out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());

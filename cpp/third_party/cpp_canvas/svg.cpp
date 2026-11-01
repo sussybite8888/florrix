@@ -1,4 +1,5 @@
 #include "svg.h"
+#include "file_source.h"
 
 #include <algorithm>
 #include <array>
@@ -1600,10 +1601,9 @@ SvgDocument::~SvgDocument() = default;
 bool SvgDocument::empty() const { return !scene_ || (scene_->root.kids.empty() && scene_->root.shape == ShapeNone); }
 
 SvgDocument SvgDocument::fromFile(const std::string& path) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) { SvgDocument document; document.warnings_.push_back("SVG: cannot open " + path); return document; }
-    std::stringstream source; source << input.rdbuf();
-    return fromString(source.str());
+    std::string source;
+    if (!readFileSource(path, source)) { SvgDocument document; document.warnings_.push_back("SVG: cannot open " + path); return document; }
+    return fromString(source);
 }
 
 SvgDocument SvgDocument::fromString(const std::string& source) {

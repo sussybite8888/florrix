@@ -7,12 +7,16 @@
 #include <sstream>
 #include <string>
 
+#include "shared/core/embedded_files.h"
+
 namespace flix {
 
 /// Reads all of `path` into `out`, byte for byte (binary, so a JSON file's
 /// bytes are exactly what the content hash folds). False, with `out`
-/// untouched, when the file cannot be opened.
+/// untouched, when the file cannot be opened. A file compiled into the
+/// program (embedded_files.h) answers before the disk does.
 inline bool readFile(const std::string& path, std::string& out) {
+    if (readEmbeddedFile(path, out)) return true;
     std::ifstream in(path, std::ios::binary);
     if (!in) return false;
     std::ostringstream buffer;

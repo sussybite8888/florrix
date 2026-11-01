@@ -222,11 +222,6 @@ void App::updateLobby() {
         // reference accepts it: with nothing focused, Enter opens chat.
         if (window_.keyPressed(Key::Enter)) {
             nameField_.blur();
-            // Entering the game is the one gesture the browser will take a
-            // fullscreen request off, so it is asked for here and at Ready --
-            // the two ways a player starts a game by hand. A scripted join
-            // (above) is not a gesture and asks for nothing.
-            window_.requestFullscreen();
             startGame();
         } else if (window_.keyPressed(Key::Escape)) {
             nameField_.blur();
@@ -329,12 +324,7 @@ void App::updateLobby() {
                 chatOpen_ = false;
             }
 
-            if (insideInclusive(layout.ready, mouse)) {
-                // See the Enter path above: Ready is a user gesture, so it can
-                // carry the fullscreen the crash later wants to fill the screen.
-                window_.requestFullscreen();
-                startGame();
-            }
+            if (insideInclusive(layout.ready, mouse)) startGame();
         }
     }
 }

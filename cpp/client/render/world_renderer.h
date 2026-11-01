@@ -237,6 +237,21 @@ public:
     /// a second, HUD-only copy of each skin is exactly how the two would drift.
     void drawFlowerBody(Canvas&, const RemoteEntity&, double timeSeconds) const;
 
+    /// The program's icon: one flower torn down the middle, each half as the
+    /// world draws it. Right of the tear the player, in a ring of basic
+    /// petals; left of it the glitch flower, in its ring of glitch petals and
+    /// caught mid-burst in its scanline tear. Fills the `size` square at the
+    /// canvas's origin, transparent around the flower. The window icon the
+    /// client sets (App::start) and the Windows .exe's (tools/app_icon.cpp)
+    /// are both this.
+    void drawAppIcon(Canvas&, double size) const;
+
+    /// drawAppIcon on Apple's icon grid, which a Mac's Dock lines every icon
+    /// up by: the picture in the middle 824 pixels of 1024, where one drawn
+    /// to the edge stands out larger than its neighbours. The Mac app's .icns
+    /// (tools/app_icon.cpp) and the window icon a Mac client sets are this.
+    void drawMacAppIcon(Canvas&, double size) const;
+
     /// A corpse's body in the same art space: dead eyes, the default colour,
     /// no skin, wearing `equipFlags`. `mouth` is the face's curve control --
     /// 15 smiles, 5 frowns. Public for the death card's flower and the HUD

@@ -94,9 +94,23 @@ void* alignedAllocate(std::size_t bytes, std::size_t align) {
     // aligned_alloc requires a size that is a multiple of the alignment.
     const std::size_t alignment = std::max<std::size_t>(align, alignof(std::max_align_t));
     const std::size_t rounded = ((bytes + alignment - 1) / alignment) * alignment;
+#ifdef _WIN32
+    // Windows' C runtime has no aligned_alloc -- its free() cannot release
+    // over-aligned memory -- and pairs _aligned_malloc with _aligned_free.
+    void* p = _aligned_malloc(rounded, alignment);
+#else
     void* p = std::aligned_alloc(alignment, rounded);
+#endif
     if (!p) fail<std::bad_alloc>();
     return p;
+}
+
+void alignedFree(void* p) {
+#ifdef _WIN32
+    _aligned_free(p);
+#else
+    std::free(p);
+#endif
 }
 
 } // namespace
@@ -119,7 +133,7 @@ Archetype::~Archetype() {
         if (!c.info->trivial) {
             for (std::size_t row = 0; row < count_; ++row) c.info->destroy(c.at(row));
         }
-        std::free(c.data);
+        alignedFree(c.data);
     }
 }
 
@@ -142,7 +156,7 @@ void Archetype::reserve(std::size_t capacity) {
                     c.info->destroy(c.at(row));
                 }
             }
-            std::free(c.data);
+            alignedFree(c.data);
         }
         c.data = fresh;
     }
