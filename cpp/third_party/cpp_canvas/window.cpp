@@ -1749,8 +1749,8 @@ void Window::requestFullscreen() {
   // The canvas is CSS-sized to the viewport and its backing store is re-read
   // from its client size every pump, so the frame after the switch just draws
   // at the full-screen resolution; nothing else here has to know.
-  // const std::string selector = "#" + impl_->elementId;
-  // emscripten_request_fullscreen(selector.c_str(), EM_TRUE);
+  const std::string selector = "#" + impl_->elementId;
+  emscripten_request_fullscreen(selector.c_str(), EM_TRUE);
 #else
   // Desktop fullscreen, the FULLSCREEN_DESKTOP ("borderless") kind: it keeps
   // the desktop's resolution and just grows the window to fill the display,
